@@ -1306,6 +1306,8 @@
     let voiceVolumeSmooth = 0;
     let lastVoiceTime = 0;
     let voiceActive = false;
+    let voiceMarks = [];
+    const VOICE_MARK_LIFETIME = 60;
 
     function startVoiceAnalysis() {
         if (audioCtx) {
@@ -1354,92 +1356,7 @@
         return voicePitch;
     }
 
-    function drawVoiceMark(type, x, y, size, r, g, b, alpha) {
-        let sx = x + scrollX, sy = y + scrollY;
-        switch (type) {
-            case 'tremble':
-                for (let j = 0; j < 3; j++) {
-                    let ang = random(TWO_PI);
-                    let disp = sin(frameCount * 0.08 + j + random(100)) * size * 0.3;
-                    let mx = sx + cos(ang + HALF_PI) * disp;
-                    let my = sy + sin(ang + HALF_PI) * disp;
-                    stroke(r, g, b, alpha * (0.5 + random() * 0.5));
-                    strokeWeight(size * 0.3 * max(0.3, 1 - j * 0.2));
-                    line(sx, sy, mx + random(-3, 3), my + random(-3, 3));
-                }
-                break;
-            case 'noise':
-                for (let j = 0; j < 4 + floor(size / 3); j++) {
-                    noStroke();
-                    let nr = constrain(r + random(-40, 40), 20, 255);
-                    let ng = constrain(g + random(-40, 40), 20, 255);
-                    let nb = constrain(b + random(-40, 40), 20, 255);
-                    let broken = Math.random() < 0.2;
-                    fill(broken ? 200 : nr, broken ? 200 : ng, broken ? 200 : nb, alpha * (broken ? 0.3 : 0.7));
-                    ellipse(sx + random(-size, size), sy + random(-size, size), random(1, size * 0.5), random(1, size * 0.5));
-                }
-                break;
-            case 'ghost':
-                let flicker = Math.random() < 0.15 ? 0 : 1;
-                if (flicker === 0) break;
-                noStroke();
-                let ghostR = constrain(r + random(-30, 30), 20, 255);
-                fill(ghostR, constrain(g + random(-30, 30), 20, 255), constrain(b + random(-30, 30), 20, 255), alpha * 0.4);
-                ellipse(sx + (noise(frameCount * 0.02, 0) - 0.5) * 6, sy + (noise(frameCount * 0.02, 100) - 0.5) * 6, size * 0.6, size * 0.6);
-                break;
-            case 'resistance':
-                let repX = 0, repY = 0;
-                for (let gl of gridLines) {
-                    if (!gl.active || gl.scarLevel < 0.15) continue;
-                    let d = abs(gl.isHorizontal ? y - gl.pos : x - gl.pos);
-                    if (d < 60) {
-                        let f = (1 - d / 60) * gl.scarLevel * 4;
-                        let ang = gl.isHorizontal ? (random() < 0.5 ? -HALF_PI : HALF_PI) : (random() < 0.5 ? 0 : PI);
-                        repX += cos(ang) * f;
-                        repY += sin(ang) * f;
-                    }
-                }
-                stroke(r, g, b, alpha);
-                strokeWeight(max(0.5, size * 0.2));
-                noFill();
-                beginShape();
-                for (let j = 0; j < 4; j++) {
-                    let t = j / 3;
-                    let px = sx + repX * t + random(-2, 2);
-                    let py = sy + repY * t + random(-2, 2);
-                    curveVertex(px, py);
-                }
-                endShape();
-                break;
-            case 'glitchspeak':
-                let char = generateGlitchspeak()[floor(random(6))] || '#';
-                let cAngle = random(TWO_PI);
-                push();
-                translate(sx, sy);
-                rotate(cAngle);
-                let cr = constrain(r + random(-30, 30), 20, 255);
-                let cg = constrain(g + random(-30, 30), 20, 255);
-                let cb = constrain(b + random(-30, 30), 20, 255);
-                fill(cr, cg, cb, alpha);
-                noStroke();
-                textFont('Courier New');
-                textSize(size * 0.8 + 4);
-                textAlign(CENTER, CENTER);
-                text(corruptText(char, 0.6), random(-2, 2), random(-2, 2));
-                pop();
-                break;
-            default:
-                noStroke();
-                fill(r, g, b, alpha);
-                ellipse(sx, sy, size * 0.8, size * 0.8);
-                if (Math.random() < 0.08) {
-                    fill(160, 140, 200, alpha * 0.5);
-                    textFont('Courier New');
-                    textSize(5);
-                    text(floor(x) + ',' + floor(y), sx + 4, sy);
-                }
-        }
-    }
+
 
     function handleVoice(text) {
         // 1. Voice analysis
@@ -1489,7 +1406,7 @@
         energy = max(0, energy - energyCost);
         localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
 
-        // 6. Generate voice marks using current stroke type
+        // 6. Generate voice marks using current stroke type (queued for draw loop)
         let markCount = min(wordCount * 2 + floor(density), 20);
         let pitchNorm = pitch > 0 ? constrain(pitch / 800, 0, 1) : random();
         let isSpeakMode = currentMode === MODES.SPEAK;
@@ -1499,20 +1416,21 @@
                 let my = gy + random(-80 - volume * 60, 80 + volume * 60);
                 let markSize = map(volume, 0, 1, 2, 18, true) * (0.5 + random() * 0.7);
                 if (energy < 20) markSize *= 0.5;
-                // Pitch → color (low = warm, high = cool)
                 let r = constrain((1 - pitchNorm) * 220 + 35, 20, 255);
-                let g = constrain(100 + noise(i * 0.3) * 80 - volume * 40, 20, 255);
+                let gn = constrain(100 + noise(i * 0.3) * 80 - volume * 40, 20, 255);
                 let b = constrain(pitchNorm * 220 + 35, 20, 255);
                 let markAlpha = random(80, 160) * (energy < 20 ? 0.5 : 1);
-                drawVoiceMark(currentStrokeType, mx, my, markSize, r, g, b, markAlpha);
+                voiceMarks.push({
+                    type: currentStrokeType, x: mx, y: my, size: markSize,
+                    r, g: gn, b, alpha: markAlpha, life: VOICE_MARK_LIFETIME
+                });
             }
-            // Corrupted transcript faintly beneath
-            fill(180, 140, 160, 25 + volume * 20);
-            noStroke();
-            textFont('Courier New');
-            textSize(6);
-            textAlign(CENTER, CENTER);
-            text(corruptText(text, 0.6), mouseX + random(-4, 4), mouseY + 22);
+            // Corrupted transcript (also queued)
+            voiceMarks.push({
+                type: '_transcript', text: text,
+                x: mouseX - scrollX, y: mouseY - scrollY + 22,
+                alpha: 25 + volume * 20, life: VOICE_MARK_LIFETIME
+            });
         }
 
         // 7. Shockwave (voice as a physical force)
@@ -1728,6 +1646,100 @@
             noStroke();
             fill(p.color[0], p.color[1], p.color[2], pa);
             ellipse(p.x + scrollX, p.y + scrollY, p.size, p.size);
+        }
+        // ── Voice marks (queued from handleVoice, rendered in draw loop) ──
+        if (voiceMarks.length > 200) voiceMarks.splice(0, voiceMarks.length - 200);
+        for (let i = voiceMarks.length - 1; i >= 0; i--) {
+            let vm = voiceMarks[i];
+            vm.life--;
+            if (vm.life <= 0) { voiceMarks.splice(i, 1); continue; }
+            let vmA = map(vm.life, 0, VOICE_MARK_LIFETIME, 0, vm.alpha);
+            let sx = vm.x + scrollX, sy = vm.y + scrollY;
+            if (vm.type === '_transcript') {
+                fill(180, 140, 160, vmA);
+                noStroke();
+                textFont('Courier New');
+                textSize(6);
+                textAlign(CENTER, CENTER);
+                text(corruptText(vm.text, 0.6), sx + random(-2, 2), sy);
+                continue;
+            }
+            let px = vm.x, py = vm.y;
+            switch (vm.type) {
+                case 'tremble':
+                    for (let j = 0; j < 3; j++) {
+                        let ang = random(TWO_PI);
+                        let disp = sin(frameCount * 0.08 + j + random(100)) * vm.size * 0.3;
+                        let mx = sx + cos(ang + HALF_PI) * disp;
+                        let my = sy + sin(ang + HALF_PI) * disp;
+                        stroke(vm.r, vm.g, vm.b, vmA * (0.5 + random() * 0.5));
+                        strokeWeight(vm.size * 0.3 * max(0.3, 1 - j * 0.2));
+                        line(sx, sy, mx + random(-3, 3), my + random(-3, 3));
+                    }
+                    break;
+                case 'noise':
+                    for (let j = 0; j < 4 + floor(vm.size / 3); j++) {
+                        noStroke();
+                        let nr = constrain(vm.r + random(-40, 40), 20, 255);
+                        let ng = constrain(vm.g + random(-40, 40), 20, 255);
+                        let nb = constrain(vm.b + random(-40, 40), 20, 255);
+                        let broken = Math.random() < 0.2;
+                        fill(broken ? 200 : nr, broken ? 200 : ng, broken ? 200 : nb, vmA * (broken ? 0.3 : 0.7));
+                        ellipse(sx + random(-vm.size, vm.size), sy + random(-vm.size, vm.size), random(1, vm.size * 0.5), random(1, vm.size * 0.5));
+                    }
+                    break;
+                case 'ghost':
+                    if (Math.random() < 0.15) break;
+                    noStroke();
+                    fill(constrain(vm.r + random(-30, 30), 20, 255), constrain(vm.g + random(-30, 30), 20, 255), constrain(vm.b + random(-30, 30), 20, 255), vmA * 0.4);
+                    ellipse(sx + (noise(frameCount * 0.02, 0) - 0.5) * 6, sy + (noise(frameCount * 0.02, 100) - 0.5) * 6, vm.size * 0.6, vm.size * 0.6);
+                    break;
+                case 'resistance':
+                    let repX = 0, repY = 0;
+                    for (let gl of gridLines) {
+                        if (!gl.active || gl.scarLevel < 0.15) continue;
+                        let d = abs(gl.isHorizontal ? py - gl.pos : px - gl.pos);
+                        if (d < 60) {
+                            let f = (1 - d / 60) * gl.scarLevel * 4;
+                            let ang = gl.isHorizontal ? (random() < 0.5 ? -HALF_PI : HALF_PI) : (random() < 0.5 ? 0 : PI);
+                            repX += cos(ang) * f;
+                            repY += sin(ang) * f;
+                        }
+                    }
+                    stroke(vm.r, vm.g, vm.b, vmA);
+                    strokeWeight(max(0.5, vm.size * 0.2));
+                    noFill();
+                    beginShape();
+                    for (let j = 0; j < 4; j++) {
+                        let t = j / 3;
+                        curveVertex(sx + repX * t + random(-2, 2), sy + repY * t + random(-2, 2));
+                    }
+                    endShape();
+                    break;
+                case 'glitchspeak':
+                    let ch = generateGlitchspeak()[floor(random(6))] || '#';
+                    push();
+                    translate(sx, sy);
+                    rotate(random(TWO_PI));
+                    fill(constrain(vm.r + random(-30, 30), 20, 255), constrain(vm.g + random(-30, 30), 20, 255), constrain(vm.b + random(-30, 30), 20, 255), vmA);
+                    noStroke();
+                    textFont('Courier New');
+                    textSize(vm.size * 0.8 + 4);
+                    textAlign(CENTER, CENTER);
+                    text(corruptText(ch, 0.6), random(-2, 2), random(-2, 2));
+                    pop();
+                    break;
+                default:
+                    noStroke();
+                    fill(vm.r, vm.g, vm.b, vmA);
+                    ellipse(sx, sy, vm.size * 0.8, vm.size * 0.8);
+                    if (Math.random() < 0.08) {
+                        fill(160, 140, 200, vmA * 0.5);
+                        textFont('Courier New');
+                        textSize(5);
+                        text(floor(px) + ',' + floor(py), sx + 4, sy);
+                    }
+            }
         }
         // Narrative texts (resistance, etc.)
         for (let nt of narrativeTexts) {
