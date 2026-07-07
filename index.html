@@ -208,6 +208,16 @@
         return null;
     }
 
+    // ─── Rift effect state ──────────────────────────────────────────
+    let gridMode = 'normal';    // 'normal' | 'code'
+    let gridModeTimer = 0;
+    let fallingWords = [];
+    let pulseWaves = [];        // { x, y, radius, maxRadius, life, maxLife }
+    let connectionNodes = [];
+    let connectionTimer = 0;
+    let scarredRegions = [];    // { x, y, radius }
+    let ghostSwarm = null;      // { x, y, timer, maxTimer, phase, scatter }
+
     // ─── Narrative messages (resistance/energy) ──────────────────────
     let narrativeTexts = [];
 
@@ -1758,6 +1768,56 @@
             if (g.flaring && g.flareDuration > 5) lastContext = 'flare';
         }
 
+        // ─── Rift effect updates ──
+        if (gridMode === 'code') {
+            gridModeTimer--;
+            if (gridModeTimer <= 0) gridMode = 'normal';
+        }
+        for (let i = fallingWords.length - 1; i >= 0; i--) {
+            let fw = fallingWords[i];
+            fw.y += fw.speed;
+            fw.life--;
+            fw.alpha = map(fw.life, 0, fw.maxLife, 0, fw.maxAlpha);
+            if (fw.life <= 0) { fallingWords.splice(i, 1); continue; }
+            fw.x += sin(frameCount * 0.03 + fw.phase) * 0.5;
+        }
+        for (let i = pulseWaves.length - 1; i >= 0; i--) {
+            let pw = pulseWaves[i];
+            pw.radius += pw.maxRadius / 35;
+            pw.life--;
+            if (pw.life <= 0) { pulseWaves.splice(i, 1); continue; }
+            // Check if wave reached user
+            let gx = mouseX - scrollX, gy = mouseY - scrollY;
+            if (dist(pw.x, pw.y, gx, gy) < pw.radius && !pw.hitUser) {
+                pw.hitUser = true;
+                energy = min(100, energy + 30);
+                document.getElementById('energy-fill').style.width = energy + '%';
+            }
+            // Make strokes glow green within wave
+            for (let s of strokes) {
+                for (let pt of s.points) {
+                    if (!s._glowTimer && dist(pt.x, pt.y, pw.x, pw.y) < pw.radius && dist(pt.x, pt.y, pw.x, pw.y) > pw.radius - 20) {
+                        s._glowTimer = 30;
+                    }
+                }
+            }
+        }
+        for (let s of strokes) {
+            if (s._glowTimer) { s._glowTimer--; if (s._glowTimer < 0) s._glowTimer = 0; }
+        }
+        if (connectionTimer > 0) connectionTimer--;
+        if (ghostSwarm) {
+            ghostSwarm.timer--;
+            ghostSwarm.phase += 0.03;
+            if (ghostSwarm.timer <= ghostSwarm.maxTimer - 120) {
+                ghostSwarm.scatter = true;
+            }
+            if (ghostSwarm.timer <= 0) {
+                for (let g of ghosts) g._swarming = false;
+                ghostSwarm = null;
+            }
+        }
+
         // ─── Convert dead strokes to ghosts ───
         let newGhosts = [];
         for (let s of strokes) {
@@ -1880,9 +1940,142 @@
         push();
         translate(screenShakeX, screenShakeY);
         for (let gl of gridLines) gl.display();
+
+        // ── Code rift: grid transforms into code strings ──
+        if (gridMode === 'code') {
+            let alpha = 60 + sin(frameCount * 0.05) * 20;
+            for (let gl of gridLines) {
+                if (Math.random() > 0.04) continue;
+                let gx = gl.isHorizontal ? 0 : gl.pos;
+                let gy = gl.isHorizontal ? gl.pos : 0;
+                let sx = gx + scrollX, sy = gy + scrollY;
+                if (sx < -40 || sx > width + 40 || sy < -40 || sy > height + 40) continue;
+                noStroke();
+                fill(68, 204, 221, alpha);
+                textFont('Courier New');
+                textSize(5);
+                textAlign(gl.isHorizontal ? LEFT : CENTER, gl.isHorizontal ? CENTER : TOP);
+                let reveal = getSystemReveal();
+                if (gl.isHorizontal) text(reveal + ' ~ ' + reveal, sx + random(-20, 20), sy);
+                else text(reveal, sx, sy + random(-20, 20));
+            }
+            // Data point flashes
+            for (let i = 0; i < 15; i++) {
+                let fx = random(-2000, 2000) + scrollX;
+                let fy = random(-2000, 2000) + scrollY;
+                if (fx < 0 || fx > width || fy < 0 || fy > height) continue;
+                noStroke();
+                fill(68, 204, 221, random(40, 100));
+                textFont('Courier New');
+                textSize(4);
+                textAlign(CENTER, CENTER);
+                text('(' + floor(random(0, 2000)) + ', ' + floor(random(0, 2000)) + ')', fx, fy);
+            }
+        }
+
+        // ── Scarred regions: broken grid lines ──
+        for (let sr of scarredRegions) {
+            let sx = sr.x + scrollX, sy = sr.y + scrollY;
+            if (sx < -50 || sx > width + 50 || sy < -50 || sy > height + 50) continue;
+            stroke(221, 68, 68, 60 + sin(frameCount * 0.04 + sr.x) * 20);
+            strokeWeight(0.8);
+            for (let i = 0; i < 5; i++) {
+                let ax = sx + random(-sr.radius, sr.radius);
+                let ay = sy + random(-sr.radius, sr.radius);
+                line(sx, sy, ax, ay);
+            }
+            noStroke();
+            fill(221, 68, 68, 15 + sin(frameCount * 0.03 + sr.x) * 8);
+            ellipse(sx, sy, sr.radius * 2, sr.radius * 2);
+        }
+
         for (let al of archive) al.display();
         for (let g of ghosts) g.display();
         for (let s of strokes) s.display();
+
+        // ── Glowing strokes (energy wave hit) ──
+        for (let s of strokes) {
+            if (s._glowTimer && s._glowTimer > 0) {
+                let ga = map(s._glowTimer, 0, 30, 0, 40);
+                for (let pt of s.points) {
+                    noStroke();
+                    fill(68, 221, 136, ga);
+                    ellipse(pt.x + scrollX, pt.y + scrollY, 3, 3);
+                }
+            }
+        }
+
+        // ── Pulse waves ──
+        for (let pw of pulseWaves) {
+            let pa = map(pw.life, 0, pw.maxLife, 0, 100);
+            if (pa < 2) continue;
+            noFill();
+            stroke(68, 221, 136, pa);
+            strokeWeight(2 - (pw.radius / pw.maxRadius) * 1.5);
+            ellipse(pw.x + scrollX, pw.y + scrollY, pw.radius * 2, pw.radius * 2);
+        }
+
+        // ── Connection network ──
+        if (connectionTimer > 0) {
+            let uids = Object.keys(users);
+            for (let i = 0; i < uids.length; i++) {
+                for (let j = i + 1; j < uids.length; j++) {
+                    let uidA = uids[i], uidB = uids[j];
+                    let uA = users[uidA], uB = users[uidB];
+                    if (!uA || !uB) continue;
+                    let ax, ay, bx, by;
+                    if (uidA === me.id) { ax = mouseX - scrollX; ay = mouseY - scrollY; }
+                    else { ax = random(-2000, 2000); ay = random(-2000, 2000); }
+                    if (uidB === me.id) { bx = mouseX - scrollX; by = mouseY - scrollY; }
+                    else { bx = random(-2000, 2000); by = random(-2000, 2000); }
+                    if (dist(ax, ay, bx, by) > 600) continue;
+                    stroke(221, 204, 68, 30 + sin(frameCount * 0.02 + i + j) * 15);
+                    strokeWeight(0.5 + sin(frameCount * 0.03 + i) * 0.3);
+                    line(ax + scrollX, ay + scrollY, bx + scrollX, by + scrollY);
+                }
+                // User node
+                if (uids[i] === me.id) {
+                    noStroke();
+                    fill(221, 204, 68, 80 + sin(frameCount * 0.05) * 30);
+                    ellipse(mouseX, mouseY, 6 + sin(frameCount * 0.04) * 2, 6 + sin(frameCount * 0.04) * 2);
+                }
+            }
+        }
+
+        // ── Falling words (glitchspeak rain) ──
+        for (let fw of fallingWords) {
+            if (fw.alpha < 1) continue;
+            noStroke();
+            fill(200, 200, 200, fw.alpha);
+            textFont('Courier New');
+            textSize(fw.size);
+            textAlign(CENTER, CENTER);
+            text(corruptText(fw.word, 0.4), fw.x + scrollX, fw.y + scrollY);
+        }
+
+        // ── Ghost swarm ──
+        if (ghostSwarm) {
+            let gx = ghostSwarm.x + scrollX, gy = ghostSwarm.y + scrollY;
+            for (let g of ghosts) {
+                if (g._swarming) {
+                    let angle = ghostSwarm.phase + g._swarmOffset;
+                    let distFromCenter = 40 + g._swarmRadius * 30;
+                    let tx = gx + cos(angle) * distFromCenter;
+                    let ty = gy + sin(angle) * distFromCenter;
+                    if (ghostSwarm.scatter) {
+                        tx += cos(angle + ghostSwarm.phase) * 200;
+                        ty += sin(angle + ghostSwarm.phase) * 200;
+                    }
+                    // Move ghost points toward target
+                    for (let pt of g.points) {
+                        pt.x += (tx - pt.x) * 0.02;
+                        pt.y += (ty - pt.y) * 0.02;
+                    }
+                    g.flaring = true;
+                    g.flareDuration = 5;
+                }
+            }
+        }
 
         // ── Voice energy beam to void strokes ──
         if (voiceActive && frameCount - lastVoiceTime < 30) {
@@ -2220,6 +2413,17 @@
             for (let g of ghosts) {
                 let f = g.getForceAt(gx, gy);
                 gx += f.x; gy += f.y;
+            }
+            // Scarred region: resistance rift effect
+            for (let sr of scarredRegions) {
+                if (dist(sr.x, sr.y, gx, gy) < sr.radius) {
+                    if (Math.random() < 0.4) return; // 40% stroke refused
+                    if (Math.random() < 0.4) { // 40% stroke corrupted
+                        gx += random(-50, 50);
+                        gy += random(-50, 50);
+                    }
+                    break;
+                }
             }
             let last = currentStroke.points[currentStroke.points.length - 1];
             if (!last || dist(gx, gy, last.x, last.y) > 4) {
@@ -2739,132 +2943,175 @@
 
         switch (rift.type) {
             case 'code':
-                // Primary: reveal code fragments for 5-10 seconds
-                for (let i = 0; i < 12; i++) {
-                    let rx = rift.x + random(-80, 80);
-                    let ry = rift.y + random(-80, 80);
+                // The grid reveals its skeleton — code strings everywhere
+                gridMode = 'code';
+                gridModeTimer = 300; // 5 seconds
+                // Explosion of code fragments from rift
+                for (let i = 0; i < 30; i++) {
+                    let rx = rift.x + random(-120, 120);
+                    let ry = rift.y + random(-120, 120);
                     createNoiseText(rx, ry, getSystemReveal(), 'rift');
                 }
-                // Secondary: code trace remains
-                riftTraces.push({ type: 'code', x: rift.x, y: rift.y, life: 300, maxLife: 300, alpha: 80, data: null });
-                // Particle burst
-                for (let i = 0; i < 20; i++) {
+                // Particle burst: cyan data sparks
+                for (let i = 0; i < 40; i++) {
                     let ang = random(TWO_PI);
-                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 3), sin(ang) * random(1, 3),
-                        20 + floor(random(20)), random(1, 3), [68, 204, 221]));
+                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 5), sin(ang) * random(1, 5),
+                        30 + floor(random(30)), random(1, 4), [68, 204, 221]));
                 }
+                // Shockwave
+                let csw = new Shockwave(rift.x, rift.y);
+                csw.maxRadius = 300; csw.life = 30; csw.maxLife = 30;
+                shockwaves.push(csw);
+                // Permanent trace: code fragments fade over 5 min
+                riftTraces.push({ type: 'code', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 90, data: null });
                 break;
 
             case 'ghost':
-                // Primary: flare all ghosts within radius
+                // The past erupts — ghosts swarm toward the user
+                let nearbyGhosts = [];
+                for (let g of ghosts) {
+                    if (g.points.length === 0) continue;
+                    let mid = g.points[floor(g.points.length / 2)];
+                    if (mid && dist(mid.x, mid.y, rift.x, rift.y) < 300) {
+                        nearbyGhosts.push(g);
+                    }
+                }
+                if (nearbyGhosts.length > 0) {
+                    ghostSwarm = { x: rift.x, y: rift.y, timer: 300, maxTimer: 300, phase: 0, scatter: false };
+                    for (let i = 0; i < nearbyGhosts.length; i++) {
+                        let g = nearbyGhosts[i];
+                        g._swarming = true;
+                        g._swarmOffset = (i / nearbyGhosts.length) * TWO_PI;
+                        g._swarmRadius = 0.5 + Math.random() * 1.5;
+                        g.flaring = true;
+                        g.flareDuration = 300;
+                    }
+                }
+                // Ghostly particles
+                for (let i = 0; i < 30; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 3), sin(ang) * random(0.5, 3),
+                        40 + floor(random(40)), random(1, 3), [136, 68, 204]));
+                }
+                // Permanent trace
+                riftTraces.push({ type: 'ghost', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 60, data: null });
+                break;
+
+            case 'connection':
+                // The network reveals itself — user connections visible
+                connectionTimer = 600; // 10 seconds
+                // Connection particles
+                let uids = Object.keys(users);
+                for (let i = 0; i < uids.length && i < 12; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 3), sin(ang) * random(1, 3),
+                        60 + floor(random(30)), random(1, 2), [221, 204, 68]));
+                }
+                // Show gold shockwave
+                let cnsw = new Shockwave(rift.x, rift.y);
+                cnsw.maxRadius = 200; cnsw.life = 25; cnsw.maxLife = 25;
+                shockwaves.push(cnsw);
+                // Permanent trace
+                riftTraces.push({ type: 'connection', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 50, data: null });
+                break;
+
+            case 'energy':
+                // A green pulse wave expands — restoring energy
+                pulseWaves.push({ x: rift.x, y: rift.y, radius: 0, maxRadius: 300, life: 35, maxLife: 35, hitUser: false });
+                energy = min(100, energy + 50);
+                // Energize nearby ghosts
                 for (let g of ghosts) {
                     if (g.points.length === 0) continue;
                     let mid = g.points[floor(g.points.length / 2)];
                     if (mid && dist(mid.x, mid.y, rift.x, rift.y) < 200) {
                         g.flaring = true;
-                        g.flareDuration = max(g.flareDuration || 0, 60 + floor(random(60)));
+                        g.flareDuration = max(g.flareDuration || 0, 40);
                     }
                 }
-                // Secondary: ghost trace
-                riftTraces.push({ type: 'ghost', x: rift.x, y: rift.y, life: 600, maxLife: 600, alpha: 50, data: null });
-                // Ghostly particles
-                for (let i = 0; i < 15; i++) {
+                // Green particle burst
+                for (let i = 0; i < 50; i++) {
                     let ang = random(TWO_PI);
-                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 2), sin(ang) * random(0.5, 2),
-                        30 + floor(random(30)), random(1, 2), [136, 68, 204]));
+                    let spd = 0.5 + random() * 4;
+                    particles.push(new Particle(sx, sy, cos(ang) * spd, sin(ang) * spd,
+                        20 + floor(random(30)), random(1, 4), [68, 221, 136]));
                 }
-                break;
-
-            case 'connection':
-                // Primary: show user network briefly (nodes + lines)
-                let uids = Object.keys(users);
-                for (let i = 0; i < uids.length && i < 8; i++) {
-                    let uid = uids[i];
-                    let u = users[uid];
-                    if (!u) continue;
-                    let ux = rift.x + random(-100, 100);
-                    let uy = rift.y + random(-100, 100);
-                    stroke(221, 204, 68, 60);
-                    strokeWeight(0.5);
-                    line(sx, sy, ux, uy);
-                    noStroke();
-                    fill(221, 204, 68, 80);
-                    ellipse(ux, uy, 4, 4);
-                }
-                // Secondary: connection trace
-                riftTraces.push({ type: 'connection', x: rift.x, y: rift.y, life: 400, maxLife: 400, alpha: 60, data: null });
-                break;
-
-            case 'energy':
-                // Primary: restore energy + pulse
-                energy = min(100, energy + 50);
-                // Also affect nearby ghosts (energize)
-                for (let g of ghosts) {
-                    if (g.points.length === 0) continue;
-                    let mid = g.points[floor(g.points.length / 2)];
-                    if (mid && dist(mid.x, mid.y, rift.x, rift.y) < 150) {
-                        g.flaring = true;
-                        g.flareDuration = max(g.flareDuration || 0, 20);
-                    }
-                }
-                // Secondary: energy trace
-                riftTraces.push({ type: 'energy', x: rift.x, y: rift.y, life: 500, maxLife: 500, alpha: 60, data: null });
-                // Green particles
-                for (let i = 0; i < 25; i++) {
-                    let ang = random(TWO_PI);
-                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 4), sin(ang) * random(1, 4),
-                        15 + floor(random(20)), random(1, 3), [68, 221, 136]));
-                }
-                // Broadcast energy to all users via notification
+                // Permanent trace
+                riftTraces.push({ type: 'energy', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 60, data: null });
                 break;
 
             case 'resistance':
-                // Primary: grid fights back in the area
-                for (let gl of gridLines) gl.applyDisturbance(rift.x, rift.y, 1.0);
-                // Distort nearby strokes
+                // The grid fights back — a permanent scar is carved
+                scarredRegions.push({ x: rift.x, y: rift.y, radius: 100 });
+                // Massive grid disturbance
+                for (let gl of gridLines) {
+                    gl.applyDisturbance(rift.x, rift.y, 1.2);
+                    for (let a = 0; a < TWO_PI; a += PI / 4) {
+                        gl.applyDisturbance(rift.x + cos(a) * 80, rift.y + sin(a) * 80, 0.8);
+                    }
+                }
+                // Distort all nearby strokes
                 for (let s of strokes) {
                     for (let pt of s.points) {
                         if (dist(pt.x, pt.y, rift.x, rift.y) < 150) {
-                            pt.x += random(-30, 30);
-                            pt.y += random(-30, 30);
+                            pt.x += random(-60, 60);
+                            pt.y += random(-60, 60);
                         }
                     }
                 }
-                // Create a shockwave
-                let sw = new Shockwave(rift.x, rift.y);
-                sw.maxRadius = 250;
-                sw.life = 40;
-                sw.maxLife = 40;
-                shockwaves.push(sw);
-                // Secondary: resistance scar
-                riftTraces.push({ type: 'resistance', x: rift.x, y: rift.y, life: 800, maxLife: 800, alpha: 70, data: null });
-                // Red particles
-                for (let i = 0; i < 20; i++) {
+                // Double shockwave
+                let sw1 = new Shockwave(rift.x, rift.y);
+                sw1.maxRadius = 200; sw1.life = 30; sw1.maxLife = 30;
+                shockwaves.push(sw1);
+                let sw2 = new Shockwave(rift.x, rift.y);
+                sw2.maxRadius = 300; sw2.life = 20; sw2.maxLife = 20;
+                shockwaves.push(sw2);
+                // Red particle explosion
+                for (let i = 0; i < 50; i++) {
                     let ang = random(TWO_PI);
-                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 5), sin(ang) * random(1, 5),
-                        20 + floor(random(20)), random(1, 4), [221, 68, 68]));
+                    let spd = 1 + random() * 6;
+                    particles.push(new Particle(sx, sy, cos(ang) * spd, sin(ang) * spd,
+                        25 + floor(random(30)), random(1, 5), [221, 68, 68]));
                 }
+                // Permanent scar (doesn't fade — stored in scarredRegions)
+                riftTraces.push({ type: 'resistance', x: rift.x, y: rift.y, life: 999999, maxLife: 999999, alpha: 80, data: null });
                 break;
 
             case 'glitchspeak':
-                // Primary: new word emerges
-                let seeds = ['d1sturb4nc3', '3ncrypt10n', 'r3fus4l', 'p4l1mp53st', 'gh0st1ng', 'fr4ctur3', 'm4nf3st0', 'd3c0d3'];
-                let word = seeds[Math.floor(Math.random() * seeds.length)];
-                if (!glitchspeak.includes(word)) {
-                    glitchspeak.push(word);
+                // Words rain down from the rift — glitchspeak in its raw form
+                let seeds = ['d1sturb4nc3', '3ncrypt10n', 'r3fus4l', 'p4l1mp53st', 'gh0st1ng', 'fr4ctur3', 'm4nf3st0', 'd3c0d3', 'c0rrupt', 'dr1ft'];
+                // Announce the new word
+                let newWord = seeds[Math.floor(Math.random() * seeds.length)];
+                if (!glitchspeak.includes(newWord)) {
+                    glitchspeak.push(newWord);
                     if (socket && wsConnected) {
-                        socket.send(JSON.stringify({ type: 'glitchspeak', words: [word] }));
+                        socket.send(JSON.stringify({ type: 'glitchspeak', words: [newWord] }));
                     }
                 }
-                createNoiseText(rift.x, rift.y, '\u2733 ' + word + ' \u2733', 'rift');
-                // Secondary: floating text trace
-                riftTraces.push({ type: 'glitchspeak', x: rift.x, y: rift.y, life: 400, maxLife: 400, alpha: 80, data: word });
-                // White particles
-                for (let i = 0; i < 15; i++) {
-                    let ang = random(TWO_PI);
-                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 2.5), sin(ang) * random(0.5, 2.5),
-                        20 + floor(random(20)), random(1, 2), [200, 200, 200]));
+                // Rain of words for 5 seconds
+                for (let i = 0; i < 50; i++) {
+                    fallingWords.push({
+                        x: rift.x + random(-150, 150),
+                        y: rift.y - random(0, 200) - i * 8,
+                        speed: 0.3 + random() * 1.2,
+                        word: seeds[Math.floor(Math.random() * seeds.length)],
+                        size: 4 + random() * 6,
+                        life: 120 + floor(random(60)),
+                        maxLife: 180,
+                        alpha: 80,
+                        maxAlpha: 60 + random() * 40,
+                        phase: random(TWO_PI)
+                    });
                 }
+                // Prominent word display
+                createNoiseText(rift.x, rift.y, '\u2733 ' + newWord + ' \u2733', 'rift');
+                // Particle burst
+                for (let i = 0; i < 35; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 3), sin(ang) * random(0.5, 3),
+                        25 + floor(random(30)), random(1, 3), [200, 200, 200]));
+                }
+                // Permanent trace
+                riftTraces.push({ type: 'glitchspeak', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 70, data: newWord });
                 break;
         }
     }
