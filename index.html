@@ -43,10 +43,11 @@
 
     // ─── Grid Scroll ────────────────────────────────────────────────
     const SCROLL_SPEED = 10;
-    const GRID_EXTENT = 2000;
+    const GRID_EXTENT = 10000;
+    const SCROLL_EXTENT = 3000;
 
-    let scrollX = (Math.random() - 0.5) * GRID_EXTENT * 2;
-    let scrollY = (Math.random() - 0.5) * GRID_EXTENT * 2;
+    let scrollX = (Math.random() - 0.5) * SCROLL_EXTENT * 2;
+    let scrollY = (Math.random() - 0.5) * SCROLL_EXTENT * 2;
     let screenShakeX = 0, screenShakeY = 0;
 
     // ─── User Parameters (unique per session) ────────────────────────
@@ -510,7 +511,7 @@
             this.phase = Math.random() * Math.PI * 2;
             this.speed = 0.006 + Math.random() * 0.025;
             this.decay = 0;
-            this.memory = Math.random() * 0.03;
+            this.memory = 0.02 + Math.random() * 0.06;
             this.active = true;
             this.memoryTraces = [];
             this.maxMemoryTraces = 50;
@@ -1841,10 +1842,10 @@
         }
 
         // ─── Continuous scroll with arrow keys (hold to move) ───
-        if (keyIsDown(LEFT_ARROW)) { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); }
-        if (keyIsDown(RIGHT_ARROW)) { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); }
-        if (keyIsDown(UP_ARROW)) { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); }
-        if (keyIsDown(DOWN_ARROW)) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); }
+        if (keyIsDown(LEFT_ARROW)) { scrollX = max(scrollX - SCROLL_SPEED, -SCROLL_EXTENT); }
+        if (keyIsDown(RIGHT_ARROW)) { scrollX = min(scrollX + SCROLL_SPEED, SCROLL_EXTENT); }
+        if (keyIsDown(UP_ARROW)) { scrollY = max(scrollY - SCROLL_SPEED, -SCROLL_EXTENT); }
+        if (keyIsDown(DOWN_ARROW)) { scrollY = min(scrollY + SCROLL_SPEED, SCROLL_EXTENT); }
 
         // ─── Voice status UI ───
         let vsEl = document.getElementById('voice-status');
