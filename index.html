@@ -22,6 +22,7 @@
             color: rgba(200, 180, 220, 0.25);
             font-size: 9px; pointer-events: none; text-align: right;
             line-height: 1.5; letter-spacing: 0.3px;
+            transition: color 0.3s;
         }
     </style>
 </head>
@@ -89,21 +90,25 @@
     // ─── WebSocket (multi-user sync) ────────────────────────────────
     const WS_URL = window.location.origin === 'file://'
         ? 'ws://localhost:3001'
-        : 'wss://glitch-drift-server.up.railway.app';
+        : 'wss://glitch-prototype-production.up.railway.app';
 
     let socket = null;
     let wsReconnectTimer = null;
     let wsConnected = false;
+    let wsRetryCount = 0;
 
     function connectWS() {
         if (socket && socket.readyState <= 1) return;
+        console.log('[WS] connecting to', WS_URL);
         try {
             socket = new WebSocket(WS_URL);
             socket.onopen = function() {
+                console.log('[WS] connected');
                 wsConnected = true;
+                wsRetryCount = 0;
                 socket.send(JSON.stringify({ type: 'join', id: me.id, params: me }));
                 updateStatus();
-                wsReconnectTimer = null;
+                if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
             };
             socket.onmessage = function(e) {
                 let d;
@@ -140,23 +145,26 @@
                     if (glitchspeak.length > 150) glitchspeak = glitchspeak.slice(-100);
                 }
             };
-            socket.onclose = function() {
+            socket.onclose = function(e) {
+                console.log('[WS] disconnected (code=' + e.code + ')');
                 wsConnected = false;
-                // Clean up stale users, but keep my own
                 for (let uid in users) {
                     if (uid !== me.id) delete users[uid];
                 }
                 updateUserCount();
                 updateStatus();
-                // Reconnect after 3s
+                wsRetryCount++;
+                let delay = Math.min(3000 * wsRetryCount, 15000);
                 if (!wsReconnectTimer) {
-                    wsReconnectTimer = setTimeout(() => { wsReconnectTimer = null; connectWS(); }, 3000);
+                    wsReconnectTimer = setTimeout(() => { wsReconnectTimer = null; connectWS(); }, delay);
                 }
             };
-            socket.onerror = function() {
-                // onclose will fire after this
+            socket.onerror = function(e) {
+                console.warn('[WS] error', e.type || e);
             };
-        } catch (e) {}
+        } catch (e) {
+            console.error('[WS] exception', e);
+        }
     }
 
     connectWS();
@@ -189,7 +197,8 @@
     function updateStatus() {
         let statusEl = document.getElementById('status');
         let parts = [];
-        if (!wsConnected) parts.push('\u26A0 offline');
+        if (!wsConnected) parts.push('\u26A0 ' + (wsRetryCount > 0 ? 'reconnecting' : 'offline'));
+        if (wsConnected && wsRetryCount > 0) parts.push('reconnected');
         let names = Object.keys(users).filter(u => u !== me.id);
         if (names.length > 0) parts.push('others: ' + names.slice(0, 4).join(', ') + (names.length > 4 ? ' +' + (names.length - 4) : ''));
         statusEl.textContent = parts.join(' \u00B7 ');
