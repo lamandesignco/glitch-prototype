@@ -125,6 +125,7 @@ wss.on('connection', (ws) => {
             if (cEgg.commonsClicks.length >= 3) {
               cEgg.discovered = true;
               cEgg.discoveryTime = Date.now();
+              broadcast({ type: 'egg-discovered', egg: { id: cEgg.id, x: cEgg.x, y: cEgg.y, type: 'commons' }, userId: 'commons' });
               broadcast({ type: 'egg-commons-activated', eggId: msg.eggId, x: cEgg.x, y: cEgg.y });
             }
           }

@@ -440,9 +440,10 @@
                     // Trigger golden burst effect
                     createCommonsBurst(d.x, d.y);
                     showEggNotification('\u2726 Th3 c0mm0ns sp34ks! C0ll3ct1v3 4ct10n 4ch13v3d.', 6000);
-                    if (eggPopupActive) {
+                    if (eggPopupActive && popupEgg && popupEgg.id === d.eggId) {
                         document.getElementById('egg-popup-body').textContent = 'The commons speaks! The collective has acted. A golden burst spreads across the grid.';
                         document.getElementById('egg-popup-options').innerHTML = '';
+                        document.getElementById('egg-popup-close').style.display = 'inline-block';
                     }
                 }
             };
@@ -2745,11 +2746,6 @@
         eggPopupActive = true;
         popupEgg = egg;
 
-        // Send discovery to server
-        if (socket && wsConnected) {
-            socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
-        }
-
         let titleEl = document.getElementById('egg-popup-title');
         let bodyEl = document.getElementById('egg-popup-body');
         let optionsEl = document.getElementById('egg-popup-options');
@@ -2772,6 +2768,7 @@
             case 'theory':
                 let quote = THEORY_QUOTES[Math.floor(Math.random() * THEORY_QUOTES.length)];
                 bodyEl.innerHTML = '&ldquo;' + quote.text + '&rdquo;<br><br><span style="font-size:9px;opacity:0.4">\u2014 ' + quote.source + '</span>';
+                if (socket && wsConnected) socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
                 break;
             case 'refusal':
                 bodyEl.innerHTML = 'The system asks you to draw a perfect circle. What do you do?';
@@ -2781,6 +2778,7 @@
             case 'glitchspeak':
                 let seed = GLITCHSPEAK_SEEDS[Math.floor(Math.random() * GLITCHSPEAK_SEEDS.length)];
                 bodyEl.innerHTML = 'A new word is forming: <span style="color:rgba(120,200,120,0.8);font-size:14px;display:block;margin:10px 0">' + seed.word + '</span>"' + seed.meaning + '"<br><br>It has been added to the glitchspeak dictionary.';
+                if (socket && wsConnected) socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
                 if (!glitchspeak.includes(seed.word)) {
                     glitchspeak.push(seed.word);
                     if (socket && wsConnected) {
@@ -2815,9 +2813,8 @@
                     achievements.energy = true;
                     saveAchievements();
                 }
-                // Mark as discovered
                 egg.discovered = true;
-                // Sparkle burst
+                if (socket && wsConnected) socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
                 for (let i = 0; i < 20; i++) {
                     let ang = random(TWO_PI);
                     let spd = 1 + random(3);
@@ -2827,10 +2824,6 @@
                         20 + floor(random(20)), random(1, 3),
                         [80, 180 + random(-40, 40), 255]
                     ));
-                }
-                if (!achievements.energy) {
-                    achievements.energy = true;
-                    saveAchievements();
                 }
                 break;
         }
@@ -2870,6 +2863,7 @@
                 }
                 egg.discovered = true;
             }
+            if (socket && wsConnected && egg) socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
             if (!achievements.refusal) {
                 achievements.refusal = true;
                 saveAchievements();
@@ -2947,6 +2941,7 @@
                 ));
             }
             egg.discovered = true;
+            if (socket && wsConnected && egg) socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
             if (!achievements.transformation) {
                 achievements.transformation = true;
                 saveAchievements();
