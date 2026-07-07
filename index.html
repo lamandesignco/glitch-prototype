@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Glitch Drift</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0810; overflow: hidden; font-family: 'Courier New', monospace; }
+        canvas { display: block; cursor: crosshair; }
+        #info {
+            position: fixed; bottom: 20px; left: 20px; right: 20px;
+            color: rgba(200, 180, 220, 0.35);
+            font-size: 10px; pointer-events: none; line-height: 1.6;
+            letter-spacing: 0.5px; user-select: none;
+            display: flex; justify-content: space-between;
+        }
+        #info .left { text-align: left; }
+        #info .right { text-align: right; }
+        #status {
+            position: fixed; top: 20px; right: 20px;
+            color: rgba(200, 180, 220, 0.25);
+            font-size: 9px; pointer-events: none; text-align: right;
+            line-height: 1.5; letter-spacing: 0.3px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div class="left">~ <span id="userLabel">drift</span> ~</div>
+        <div class="right">click-drag · type · speak · <span id="userCount">1</span> here</div>
+    </div>
+    <div id="status"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script>
+    // ─── Configuration ───────────────────────────────────────────────
+    const CFG = {
+        cellSize: 40,
+        maxStrokes: 200,
+        maxNoiseTexts: 30,
+        decayRate: 0.0005,
+        archiveInterval: 600,
+        particleCap: 1500
+    };
+
+    const BASE = {
+        grid: [200, 180, 220],
+        voice: [200, 80, 120],
+        keyboard: [80, 200, 180],
+        ghost: [180, 180, 100],
+        fossil: [100, 100, 120],
+        bg: [10, 8, 15]
+    };
+
+    // ─── User Parameters (unique per session) ────────────────────────
+    function generateUser() {
+        let id = 'u' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+        return {
+            id: id,
+            color: [
+                80 + Math.floor(Math.random() * 120),
+                60 + Math.floor(Math.random() * 100),
+                140 + Math.floor(Math.random() * 100)
+            ],
+            tremble: 1.5 + Math.random() * 6,
+            thickness: 1 + Math.random() * 4,
+            speedMod: 0.4 + Math.random() * 1.4,
+            particleChance: 0.01 + Math.random() * 0.04
+        };
+    }
+
+    let me = generateUser();
+    let users = {}; // id → params for remote users
+    users[me.id] = me;
+
+    // ─── State ───────────────────────────────────────────────────────
+    let gridLines = [];
+    let strokes = [];
+    let particles = [];
+    let noiseTexts = [];
+    let glitchspeak = [];
+    let archive = [];
+    let shockwaves = [];
+    let frameCounter = 0;
+    let isDrawing = false;
+    let currentStroke = null;
+    let voiceReady = false;
+
+    // ─── WebSocket (multi-user sync) ────────────────────────────────
+    const WS_URL = window.location.origin === 'file://'
+        ? 'ws://localhost:3001'
+        : 'wss://glitch-drift-server.up.railway.app';
+
+    let socket = null;
+    let wsReconnectTimer = null;
+    let wsConnected = false;
+
+    function connectWS() {
+        if (socket && socket.readyState <= 1) return;
+        try {
+            socket = new WebSocket(WS_URL);
+            socket.onopen = function() {
+                wsConnected = true;
+                socket.send(JSON.stringify({ type: 'join', id: me.id, params: me }));
+                updateStatus();
+                wsReconnectTimer = null;
+            };
+            socket.onmessage = function(e) {
+                let d;
+                try { d = JSON.parse(e.data); } catch (_) { return; }
+                if (d.type === 'welcome') {
+                    for (let uid in d.users) {
+                        if (uid !== me.id && !users[uid]) {
+                            users[uid] = d.users[uid];
+                            users[uid].lastSeen = Date.now();
+                        }
+                    }
+                    updateUserCount();
+                } else if (d.type === 'stroke') {
+                    let s = Stroke.deserialize(d.data);
+                    if (s && !strokes.find(st => st.id === s.id)) {
+                        strokes.push(s);
+                        if (strokes.length > CFG.maxStrokes) strokes.splice(0, strokes.length - CFG.maxStrokes);
+                    }
+                } else if (d.type === 'user-join') {
+                    if (d.id !== me.id && !users[d.id]) {
+                        users[d.id] = d.params;
+                        users[d.id].lastSeen = Date.now();
+                        updateUserCount();
+                    }
+                } else if (d.type === 'user-leave') {
+                    if (d.id !== me.id && users[d.id]) {
+                        delete users[d.id];
+                        updateUserCount();
+                    }
+                } else if (d.type === 'glitchspeak') {
+                    for (let w of d.words) {
+                        if (!glitchspeak.includes(w)) glitchspeak.push(w);
+                    }
+                    if (glitchspeak.length > 150) glitchspeak = glitchspeak.slice(-100);
+                }
+            };
+            socket.onclose = function() {
+                wsConnected = false;
+                // Clean up stale users, but keep my own
+                for (let uid in users) {
+                    if (uid !== me.id) delete users[uid];
+                }
+                updateUserCount();
+                updateStatus();
+                // Reconnect after 3s
+                if (!wsReconnectTimer) {
+                    wsReconnectTimer = setTimeout(() => { wsReconnectTimer = null; connectWS(); }, 3000);
+                }
+            };
+            socket.onerror = function() {
+                // onclose will fire after this
+            };
+        } catch (e) {}
+    }
+
+    connectWS();
+
+    setInterval(() => {
+        if (socket && socket.readyState === 1) {
+            socket.send(JSON.stringify({ type: 'ping', id: me.id }));
+        }
+        let now = Date.now();
+        for (let uid in users) {
+            if (uid !== me.id && users[uid].lastSeen && now - users[uid].lastSeen > 10000) {
+                delete users[uid];
+            }
+        }
+        updateUserCount();
+    }, 3000);
+
+    function broadcastStroke(s) {
+        if (socket && socket.readyState === 1) {
+            socket.send(JSON.stringify({ type: 'stroke', data: s.serialize() }));
+        }
+    }
+
+    function broadcastGlitchspeak(word) {
+        if (socket && socket.readyState === 1) {
+            socket.send(JSON.stringify({ type: 'glitchspeak', words: [word] }));
+        }
+    }
+
+    function updateStatus() {
+        let statusEl = document.getElementById('status');
+        let parts = [];
+        if (!wsConnected) parts.push('\u26A0 offline');
+        let names = Object.keys(users).filter(u => u !== me.id);
+        if (names.length > 0) parts.push('others: ' + names.slice(0, 4).join(', ') + (names.length > 4 ? ' +' + (names.length - 4) : ''));
+        statusEl.textContent = parts.join(' \u00B7 ');
+        statusEl.style.color = wsConnected ? 'rgba(200,180,220,0.25)' : 'rgba(200,80,80,0.5)';
+    }
+
+    function updateUserCount() {
+        let count = Object.keys(users).length;
+        document.getElementById('userCount').textContent = count;
+        document.getElementById('userLabel').textContent = me.id;
+        updateStatus();
+    }
+
+    // ─── Glitchspeak ─────────────────────────────────────────────────
+    function generateGlitchspeak(input) {
+        let word = input || glitchspeak[Math.floor(Math.random() * glitchspeak.length)] || 'dr1ft';
+        let chars = word.split('');
+        const reps = { a: '4', e: '3', i: '1', o: '0', s: '5', t: '7', g: '9', b: '8', l: '1', r: '2' };
+        for (let i = 0; i < chars.length; i++) {
+            if (Math.random() < 0.35) {
+                let c = chars[i].toLowerCase();
+                if (reps[c]) chars[i] = reps[c];
+            }
+        }
+        let result = chars.join('');
+        if (!glitchspeak.includes(result)) glitchspeak.push(result);
+        if (glitchspeak.length > 100) glitchspeak.splice(0, 10);
+        return result;
+    }
+
+    function corruptText(text, rate) {
+        rate = rate || 0.3;
+        let chars = text.split('');
+        const reps = { a: '4', e: '3', i: '1', o: '0', s: '5', t: '7' };
+        const syms = ['\u2588', '\u2593', '?', '~', '#', '@', '%', '&'];
+        for (let i = 0; i < chars.length; i++) {
+            if (Math.random() < rate) {
+                let c = chars[i].toLowerCase();
+                if (reps[c]) chars[i] = reps[c];
+                else if (Math.random() < 0.25) chars[i] = syms[Math.floor(Math.random() * syms.length)];
+            }
+        }
+        return chars.join('');
+    }
+
+    // ─── Particle ────────────────────────────────────────────────────
+    class Particle {
+        constructor(x, y, vx, vy, life, size, color) {
+            this.x = x; this.y = y;
+            this.vx = vx; this.vy = vy;
+            this.life = life; this.maxLife = life;
+            this.size = size;
+            this.color = color;
+        }
+        update() {
+            this.x += this.vx; this.y += this.vy;
+            this.vx *= 0.96; this.vy *= 0.96;
+            this.life--; this.size *= 0.994;
+        }
+        get alive() { return this.life > 0 && this.size > 0.05; }
+        get alpha() { return map(this.life, 0, this.maxLife, 0, 180); }
+    }
+
+    // ─── GridLine (screen-space, fluid) ──────────────────────────────
+    class GridLine {
+        constructor(pos, isHorizontal) {
+            this.pos = pos;
+            this.isHorizontal = isHorizontal;
+            this.distortion = 0;
+            this.offset = 0;
+            this.phase = Math.random() * Math.PI * 2;
+            this.speed = 0.006 + Math.random() * 0.025;
+            this.decay = 0;
+            this.memory = Math.random() * 0.03;
+            this.active = true;
+        }
+        update() {
+            this.distortion *= (1 - 0.02);
+            this.distortion = Math.max(this.distortion, this.memory);
+            this.decay = Math.max(0, this.decay - 0.00015);
+            this.phase += this.speed;
+            this.offset = sin(this.phase) * this.distortion * 12 + sin(this.phase * 2.3) * this.distortion * 4;
+            if (this.decay > 0.95) this.active = false;
+            if (this.distortion < 0.001 && this.decay < 0.01) this.active = true;
+        }
+        applyDisturbance(mx, my, strength) {
+            let d = this.isHorizontal ? abs(my - this.pos) : abs(mx - this.pos);
+            if (d < 200) {
+                let force = strength * (1 - d / 200) * (1 + sin(this.phase) * 0.3);
+                this.distortion = Math.min(1, this.distortion + force * 0.5);
+                this.decay = Math.min(1, this.decay + force * 0.06);
+                this.active = true;
+            }
+        }
+        applyShockwave(sx, sy, radius, strength) {
+            let d = this.isHorizontal ? abs(sy - this.pos) : abs(sx - this.pos);
+            if (d < radius) {
+                let force = strength * (1 - d / radius) * 0.6;
+                this.distortion = Math.min(1, this.distortion + force);
+                this.decay = Math.min(1, this.decay + force * 0.12);
+                this.active = true;
+            }
+        }
+        display() {
+            if (!this.active) return;
+            let alpha = map(this.distortion, 0, 1, 50, 8) * (1 - this.decay * 0.8);
+            alpha = Math.max(alpha, 0);
+            if (alpha < 2) return;
+
+            stroke(BASE.grid[0], BASE.grid[1], BASE.grid[2], alpha);
+            strokeWeight(map(this.distortion, 0, 1, 0.3, 2.5));
+            noFill();
+
+            let len = this.isHorizontal ? width : height;
+            let segs = max(6, floor(len / 35));
+            let sl = len / segs;
+
+            beginShape();
+            for (let i = 0; i <= segs; i++) {
+                let t = i / segs;
+                let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
+                if (this.isHorizontal) {
+                    vertex(i * sl, this.pos + this.offset + nOff);
+                } else {
+                    vertex(this.pos + this.offset + nOff, i * sl);
+                }
+            }
+            endShape();
+        }
+    }
+
+    // ─── Stroke (click-drag drawing, per-user parameters) ───────────
+    let strokeIdCounter = 0;
+
+    class Stroke {
+        constructor(userId, userParams) {
+            this.id = userId + '_' + (strokeIdCounter++);
+            this.userId = userId;
+            this.params = userParams;
+            this.points = [];
+            this.timestamp = Date.now();
+            this.decay = 0;
+            this.colorSeed = Math.random() * 1000;
+        }
+        addPoint(x, y) { this.points.push({ x, y }); }
+        update() { this.decay += CFG.decayRate; }
+        get alive() { return this.decay < 2.5; }
+        get alpha() { return map(this.decay, 0, 2.5, 200, 5); }
+
+        display() {
+            let a = this.alpha;
+            if (a < 1 || this.points.length < 2) return;
+
+            let p = this.params;
+            let col = p ? p.color : [120, 80, 200];
+            let tremble = p ? p.tremble : 3;
+            let thick = p ? p.thickness : 2.5;
+            let speedMod = p ? p.speedMod : 1;
+            let pChance = p ? p.particleChance : 0.02;
+
+            let n = this.points.length;
+            for (let i = 1; i < n; i++) {
+                let p1 = this.points[i - 1];
+                let p2 = this.points[i];
+
+                // 25% chance of break
+                if (Math.random() < 0.25) continue;
+
+                // Distance-based speed factor
+                let segDist = dist(p1.x, p1.y, p2.x, p2.y);
+                let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
+
+                // Color shift per segment
+                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                let r = constrain(col[0] + shift * random(0.8, 1.2), 20, 255);
+                let g = constrain(col[1] + shift * random(0.6, 1.4), 20, 255);
+                let b = constrain(col[2] + shift * random(0.8, 1.2), 20, 255);
+
+                // Thickness: base + speed influence
+                let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+
+                // Noise offset per endpoint
+                let ns = this.colorSeed + i * 0.5;
+                let ox1 = (noise(ns, this.decay * 2) - 0.5) * tremble * speedFactor;
+                let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * tremble * speedFactor;
+                let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * tremble * speedFactor;
+                let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * tremble * speedFactor;
+
+                stroke(r, g, b, a);
+                strokeWeight(max(0.3, segThick));
+                line(p1.x + ox1, p1.y + oy1, p2.x + ox2, p2.y + oy2);
+
+                // Particles
+                if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
+                    let angle = random(TWO_PI);
+                    let spd = 0.5 + random() * 1.5;
+                    particles.push(new Particle(p2.x, p2.y, cos(angle) * spd, sin(angle) * spd, 20 + floor(random(30)), random(0.5, 2), [r, g, b]));
+                }
+            }
+        }
+
+        serialize() {
+            return { id: this.id, userId: this.userId, params: this.params, points: this.points, timestamp: this.timestamp };
+        }
+
+        static deserialize(d) {
+            let s = new Stroke(d.userId, d.params);
+            s.id = d.id;
+            s.points = d.points;
+            s.timestamp = d.timestamp;
+            return s;
+        }
+    }
+
+    // ─── NoiseText ───────────────────────────────────────────────────
+    class NoiseText {
+        constructor(x, y, text, type) {
+            this.text = text || '~';
+            this.x = x; this.y = y;
+            this.vx = (Math.random() - 0.5) * 0.25;
+            this.vy = (Math.random() - 0.5) * 0.25;
+            this.type = type || 'generated';
+            this.decay = 0;
+            this.corruption = 0;
+            this.letters = this.text.split('');
+            this.phase = Math.random() * Math.PI * 2;
+            this.baseAlpha = 200;
+            this.color = type === 'voice' ? BASE.voice : type === 'keyboard' ? BASE.keyboard : BASE.grid;
+        }
+        update() {
+            this.x += this.vx; this.y += this.vy;
+            this.vx += (Math.random() - 0.5) * 0.008;
+            this.vy += (Math.random() - 0.5) * 0.008;
+            this.vx *= 0.999; this.vy *= 0.999;
+            this.decay += CFG.decayRate * 0.5;
+            this.corruption += 0.002;
+            this.phase += 0.01;
+            if (this.corruption > Math.random() * 0.3 + 0.1) {
+                let idx = Math.floor(Math.random() * this.letters.length);
+                let syms = ['\u2588', '\u2593', '?', '~', '#', '@', '%', '&'];
+                if (Math.random() < 0.5) {
+                    let reps = { a: '4', e: '3', i: '1', o: '0', s: '5', t: '7' };
+                    let c = this.letters[idx].toLowerCase();
+                    if (reps[c]) this.letters[idx] = reps[c];
+                    else this.letters[idx] = syms[Math.floor(Math.random() * syms.length)];
+                } else {
+                    this.letters[idx] = syms[Math.floor(Math.random() * syms.length)];
+                }
+                this.corruption = 0;
+            }
+        }
+        get alive() { return this.decay < 1.8; }
+        display() {
+            let a = map(this.decay, 0, 1.8, this.baseAlpha, 5);
+            if (a < 2) return;
+            push();
+            translate(this.x, this.y);
+            rotate(sin(this.phase * 0.5) * 0.02);
+            textFont('Courier New');
+            textSize(11);
+            textAlign(LEFT, CENTER);
+            for (let i = 0; i < this.letters.length; i++) {
+                let ch = this.letters[i];
+                let ca = a * (1 - (i / this.letters.length) * 0.2);
+                let ox = (Math.random() - 0.5) * this.corruption * 2;
+                let oy = (Math.random() - 0.5) * this.corruption * 2;
+                fill(this.color[0], this.color[1], this.color[2], ca);
+                text(ch, i * 7 + ox, oy);
+            }
+            pop();
+        }
+    }
+
+    // ─── Shockwave ───────────────────────────────────────────────────
+    class Shockwave {
+        constructor(x, y) {
+            this.x = x; this.y = y;
+            this.radius = 0;
+            this.maxRadius = 250;
+            this.strength = 1;
+            this.life = 40;
+            this.maxLife = 40;
+        }
+        update() {
+            this.radius += this.maxRadius / 35;
+            this.strength *= 0.93;
+            this.life--;
+            for (let gl of gridLines) gl.applyShockwave(this.x, this.y, this.radius, this.strength * 0.3);
+        }
+        get alive() { return this.life > 0; }
+        display() {
+            let a = map(this.life, 0, this.maxLife, 0, 60);
+            if (a < 1) return;
+            noFill();
+            stroke(BASE.grid[0], BASE.grid[1], BASE.grid[2], a);
+            strokeWeight(0.5);
+            ellipse(this.x, this.y, this.radius * 2);
+        }
+    }
+
+    // ─── Archive ─────────────────────────────────────────────────────
+    class ArchiveLayer {
+        constructor(source) {
+            this.points = [];
+            for (let s of source) {
+                for (let p of s.points) this.points.push({ x: p.x, y: p.y });
+                if (this.points.length > 100) break;
+            }
+            this.decay = 0;
+            this.active = true;
+        }
+        update() { this.decay += 0.0003; if (this.decay > 2) this.active = false; }
+        get alpha() { return map(this.decay, 0, 2, 18, 0); }
+        display() {
+            if (!this.active) return;
+            let a = this.alpha;
+            if (a < 0.3) return;
+            let c = BASE.ghost;
+            for (let p of this.points) {
+                if (Math.random() > 0.4) continue;
+                noStroke();
+                fill(c[0], c[1], c[2], a * (0.5 + Math.random() * 0.5));
+                ellipse(p.x, p.y, 1.2, 1.2);
+            }
+        }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────
+    function initGrid() {
+        gridLines = [];
+        let cols = floor(width / CFG.cellSize);
+        let rows = floor(height / CFG.cellSize);
+        for (let i = 0; i <= cols; i++) {
+            let x = i * CFG.cellSize;
+            gridLines.push(new GridLine(x, false));
+        }
+        for (let i = 0; i <= rows; i++) {
+            let y = i * CFG.cellSize;
+            gridLines.push(new GridLine(y, true));
+        }
+    }
+
+    function createNoiseText(x, y, text, type) {
+        if (noiseTexts.length >= CFG.maxNoiseTexts) noiseTexts.shift();
+        noiseTexts.push(new NoiseText(x, y, text, type));
+    }
+
+    function spawnInitialNoise() {
+        let words = ['dr1ft', 'v01d', 'gr1d', 'tr4c3', 'n0153', 'gh0st', 'd3c4y', 'p4l1mp53st'];
+        for (let i = 0; i < 4; i++) {
+            createNoiseText(random(width), random(height), words[i], 'generated');
+        }
+    }
+
+    // ─── Voice ───────────────────────────────────────────────────────
+    let recognition = null;
+
+    function startVoice() {
+        if (voiceReady) return;
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { voiceReady = true; return; }
+        try {
+            recognition = new SR();
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+            recognition.onresult = function(event) {
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        let text = event.results[i][0].transcript.trim();
+                        if (text.length > 0) handleVoice(text);
+                    }
+                }
+            };
+            recognition.onerror = function(e) {
+                if (e.error === 'not-allowed') { voiceReady = true; return; }
+                setTimeout(() => { try { if (recognition) recognition.start(); } catch (e) {} }, 2000);
+            };
+            recognition.start();
+            voiceReady = true;
+        } catch (e) { voiceReady = true; }
+    }
+
+    function handleVoice(text) {
+        let corrupted = corruptText(text, 0.4);
+        let firstWord = corrupted.split(/\s+/)[0] || '~';
+        let glitchWord = generateGlitchspeak(firstWord);
+        broadcastGlitchspeak(glitchWord);
+
+        for (let i = 0; i < 6; i++) {
+            let t = new NoiseText(
+                mouseX + random(-250, 250), mouseY + random(-250, 250),
+                i === 0 ? '\u2726 ' + glitchWord + ' \u2726' : generateGlitchspeak(corrupted.split(/\s+/)[i % 3] || 'v01d'),
+                'voice'
+            );
+            if (noiseTexts.length >= CFG.maxNoiseTexts) noiseTexts.shift();
+            noiseTexts.push(t);
+        }
+
+        let sw = new Shockwave(mouseX + random(-100, 100), mouseY + random(-100, 100));
+        sw.maxRadius = 400; sw.life = 55; sw.maxLife = 55;
+        shockwaves.push(sw);
+    }
+
+    // ─── p5: setup ──────────────────────────────────────────────────
+    function setup() {
+        createCanvas(windowWidth, windowHeight);
+        pixelDensity(1);
+        colorMode(RGB);
+        textFont('Courier New');
+
+        glitchspeak = [
+            'gr1dfl0w', 'tr4c3f0ss1l', 'n0153', 'dr1ft',
+            'p4l1mp53st', 'gh0st1ng', '3ncrypt10n', 'r3fus4l',
+            'v01d', 'd3c4y', 'p4rt1cl3', 'd1sturb4nc3'
+        ];
+
+        initGrid();
+        spawnInitialNoise();
+        updateUserCount();
+    }
+
+    // ─── p5: draw ───────────────────────────────────────────────────
+    function draw() {
+        frameCounter++;
+
+        if (frameCount < 5) {
+            background(BASE.bg[0], BASE.bg[1], BASE.bg[2]);
+        } else {
+            noStroke();
+            fill(BASE.bg[0], BASE.bg[1], BASE.bg[2], 16);
+            rect(0, 0, width, height);
+        }
+
+        // Update
+        for (let gl of gridLines) gl.update();
+        for (let s of strokes) s.update();
+        for (let nt of noiseTexts) nt.update();
+        for (let sw of shockwaves) sw.update();
+        for (let al of archive) al.update();
+        for (let p of particles) p.update();
+
+        // Cull
+        strokes = strokes.filter(s => s.alive);
+        noiseTexts = noiseTexts.filter(nt => nt.alive);
+        shockwaves = shockwaves.filter(sw => sw.alive);
+        particles = particles.filter(p => p.alive);
+        archive = archive.filter(al => al.active);
+
+        // Periodic noise
+        if (frameCounter % 180 === 0 && noiseTexts.length < CFG.maxNoiseTexts - 2) {
+            createNoiseText(random(width), random(height), generateGlitchspeak(), 'generated');
+        }
+
+        // Archive
+        if (frameCounter % CFG.archiveInterval === 0 && strokes.length > 0) {
+            archive.push(new ArchiveLayer(strokes.slice(-8)));
+        }
+
+        // Auto-save glitchspeak
+        if (frameCounter % 300 === 0) {
+            try { localStorage.setItem('glitchDriftState', JSON.stringify({ glitchspeak: glitchspeak.slice(-50) })); } catch (e) {}
+        }
+
+        // Render
+        for (let gl of gridLines) gl.display();
+        for (let al of archive) al.display();
+        for (let s of strokes) s.display();
+        for (let nt of noiseTexts) nt.display();
+        for (let sw of shockwaves) sw.display();
+        for (let p of particles) {
+            let pa = p.alpha;
+            if (pa < 1) continue;
+            noStroke();
+            fill(p.color[0], p.color[1], p.color[2], pa);
+            ellipse(p.x, p.y, p.size, p.size);
+        }
+    }
+
+    // ─── Resize ──────────────────────────────────────────────────────
+    function windowResized() {
+        resizeCanvas(windowWidth, windowHeight);
+        initGrid();
+    }
+
+    // ─── Mouse (drawing only on click-drag) ──────────────────────────
+    function mousePressed() {
+        if (!voiceReady) startVoice();
+
+        // Click: shockwave + grid disturbance
+        shockwaves.push(new Shockwave(mouseX, mouseY));
+        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.6);
+
+        // Start drawing stroke
+        isDrawing = true;
+        currentStroke = new Stroke(me.id, me);
+        if (strokes.length >= CFG.maxStrokes) strokes.shift();
+        strokes.push(currentStroke);
+        currentStroke.addPoint(mouseX, mouseY);
+    }
+
+    function mouseDragged() {
+        if (!currentStroke) return;
+        let last = currentStroke.points[currentStroke.points.length - 1];
+        if (!last || dist(mouseX, mouseY, last.x, last.y) > 4) {
+            currentStroke.addPoint(mouseX, mouseY);
+        }
+        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.4);
+    }
+
+    function mouseReleased() {
+        if (currentStroke) {
+            if (currentStroke.points.length > 1) {
+                broadcastStroke(currentStroke);
+            } else {
+                strokes.pop();
+            }
+        }
+        isDrawing = false;
+        currentStroke = null;
+    }
+
+    // No hover traces—only grid disturbance
+    function mouseMoved() {
+        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.05);
+    }
+
+    // ─── Keyboard ────────────────────────────────────────────────────
+    function keyPressed() {
+        if (!voiceReady) startVoice();
+
+        if (key === 'r' || key === 'R') {
+            strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
+            return;
+        }
+        if (key === 's' || key === 'S') {
+            saveToURL();
+            return;
+        }
+
+        let glitchWord = generateGlitchspeak(key);
+        broadcastGlitchspeak(glitchWord);
+        createNoiseText(mouseX + random(-20, 20), mouseY + random(-20, 20), glitchWord, 'keyboard');
+    }
+
+    // ─── State ───────────────────────────────────────────────────────
+    function saveToURL() {
+        try {
+            let state = { glitchspeak: glitchspeak.slice(-30), time: Date.now() };
+            let json = JSON.stringify(state);
+            let compressed = btoa(encodeURIComponent(json)).replace(/\+/g, '-').replace(/\//g, '_');
+            window.location.hash = compressed;
+            if (navigator.clipboard) navigator.clipboard.writeText(window.location.href).catch(() => {});
+        } catch (e) {}
+    }
+
+    (function loadFromHash() {
+        let hash = window.location.hash.slice(1);
+        if (!hash) return;
+        try {
+            let json = decodeURIComponent(atob(hash.replace(/-/g, '+').replace(/_/g, '/')));
+            let state = JSON.parse(json);
+            if (state.glitchspeak) glitchspeak = state.glitchspeak;
+        } catch (e) {}
+    })();
+    </script>
+</body>
+</html>
