@@ -1271,6 +1271,7 @@
 
     function startVoice() {
         if (voiceReady) return;
+        startVoiceAnalysis();
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SR) { voiceReady = true; return; }
         try {
@@ -1295,55 +1296,250 @@
         } catch (e) { voiceReady = true; }
     }
 
+    // ─── Voice Analysis (Web Audio API) ────────────────────────────
+    let audioCtx = null;
+    let analyser = null;
+    let audioDataTime = null;
+    let audioDataFreq = null;
+    let voiceVolume = 0;
+    let voicePitch = 0;
+    let voiceVolumeSmooth = 0;
+    let lastVoiceTime = 0;
+    let voiceActive = false;
+
+    function startVoiceAnalysis() {
+        if (audioCtx) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return;
+        }
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                let src = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 2048;
+                src.connect(analyser);
+                audioDataTime = new Uint8Array(analyser.fftSize);
+                audioDataFreq = new Uint8Array(analyser.frequencyBinCount);
+            }).catch(() => {});
+        } catch (e) {}
+    }
+
+    function getVolume() {
+        if (!analyser || !audioDataTime) return voiceVolumeSmooth;
+        analyser.getByteTimeDomainData(audioDataTime);
+        let sum = 0;
+        for (let i = 0; i < audioDataTime.length; i++) {
+            let val = audioDataTime[i] / 128 - 1;
+            sum += val * val;
+        }
+        let rms = Math.min(1, Math.sqrt(sum / audioDataTime.length) * 2);
+        voiceVolumeSmooth = voiceVolumeSmooth * 0.7 + rms * 0.3;
+        return voiceVolumeSmooth;
+    }
+
+    function getPitch() {
+        if (!analyser || !audioDataFreq || !audioCtx) return voicePitch;
+        analyser.getByteFrequencyData(audioDataFreq);
+        let maxVal = 0, maxIdx = 0;
+        for (let i = 0; i < audioDataFreq.length; i++) {
+            if (audioDataFreq[i] > maxVal) {
+                maxVal = audioDataFreq[i];
+                maxIdx = i;
+            }
+        }
+        if (maxVal < 20) return voicePitch;
+        let pitch = maxIdx * audioCtx.sampleRate / analyser.fftSize;
+        voicePitch = voicePitch * 0.6 + pitch * 0.4;
+        return voicePitch;
+    }
+
+    function drawVoiceMark(type, x, y, size, r, g, b, alpha) {
+        let sx = x + scrollX, sy = y + scrollY;
+        switch (type) {
+            case 'tremble':
+                for (let j = 0; j < 3; j++) {
+                    let ang = random(TWO_PI);
+                    let disp = sin(frameCount * 0.08 + j + random(100)) * size * 0.3;
+                    let mx = sx + cos(ang + HALF_PI) * disp;
+                    let my = sy + sin(ang + HALF_PI) * disp;
+                    stroke(r, g, b, alpha * (0.5 + random() * 0.5));
+                    strokeWeight(size * 0.3 * max(0.3, 1 - j * 0.2));
+                    line(sx, sy, mx + random(-3, 3), my + random(-3, 3));
+                }
+                break;
+            case 'noise':
+                for (let j = 0; j < 4 + floor(size / 3); j++) {
+                    noStroke();
+                    let nr = constrain(r + random(-40, 40), 20, 255);
+                    let ng = constrain(g + random(-40, 40), 20, 255);
+                    let nb = constrain(b + random(-40, 40), 20, 255);
+                    let broken = Math.random() < 0.2;
+                    fill(broken ? 200 : nr, broken ? 200 : ng, broken ? 200 : nb, alpha * (broken ? 0.3 : 0.7));
+                    ellipse(sx + random(-size, size), sy + random(-size, size), random(1, size * 0.5), random(1, size * 0.5));
+                }
+                break;
+            case 'ghost':
+                let flicker = Math.random() < 0.15 ? 0 : 1;
+                if (flicker === 0) break;
+                noStroke();
+                let ghostR = constrain(r + random(-30, 30), 20, 255);
+                fill(ghostR, constrain(g + random(-30, 30), 20, 255), constrain(b + random(-30, 30), 20, 255), alpha * 0.4);
+                ellipse(sx + (noise(frameCount * 0.02, 0) - 0.5) * 6, sy + (noise(frameCount * 0.02, 100) - 0.5) * 6, size * 0.6, size * 0.6);
+                break;
+            case 'resistance':
+                let repX = 0, repY = 0;
+                for (let gl of gridLines) {
+                    if (!gl.active || gl.scarLevel < 0.15) continue;
+                    let d = abs(gl.isHorizontal ? y - gl.pos : x - gl.pos);
+                    if (d < 60) {
+                        let f = (1 - d / 60) * gl.scarLevel * 4;
+                        let ang = gl.isHorizontal ? (random() < 0.5 ? -HALF_PI : HALF_PI) : (random() < 0.5 ? 0 : PI);
+                        repX += cos(ang) * f;
+                        repY += sin(ang) * f;
+                    }
+                }
+                stroke(r, g, b, alpha);
+                strokeWeight(max(0.5, size * 0.2));
+                noFill();
+                beginShape();
+                for (let j = 0; j < 4; j++) {
+                    let t = j / 3;
+                    let px = sx + repX * t + random(-2, 2);
+                    let py = sy + repY * t + random(-2, 2);
+                    curveVertex(px, py);
+                }
+                endShape();
+                break;
+            case 'glitchspeak':
+                let char = generateGlitchspeak()[floor(random(6))] || '#';
+                let cAngle = random(TWO_PI);
+                push();
+                translate(sx, sy);
+                rotate(cAngle);
+                let cr = constrain(r + random(-30, 30), 20, 255);
+                let cg = constrain(g + random(-30, 30), 20, 255);
+                let cb = constrain(b + random(-30, 30), 20, 255);
+                fill(cr, cg, cb, alpha);
+                noStroke();
+                textFont('Courier New');
+                textSize(size * 0.8 + 4);
+                textAlign(CENTER, CENTER);
+                text(corruptText(char, 0.6), random(-2, 2), random(-2, 2));
+                pop();
+                break;
+            default:
+                noStroke();
+                fill(r, g, b, alpha);
+                ellipse(sx, sy, size * 0.8, size * 0.8);
+                if (Math.random() < 0.08) {
+                    fill(160, 140, 200, alpha * 0.5);
+                    textFont('Courier New');
+                    textSize(5);
+                    text(floor(x) + ',' + floor(y), sx + 4, sy);
+                }
+        }
+    }
+
     function handleVoice(text) {
+        // 1. Voice analysis
+        let volume = getVolume();
+        let pitch = getPitch();
+        let words = text.split(/\s+/).filter(w => w.length > 0);
+        let wordCount = words.length;
+        let wordsPerSec = wordCount / max(1, text.length / 15);
+        let density = constrain(wordsPerSec * 2, 2, 12);
+        voiceActive = true;
+        lastVoiceTime = frameCount;
+
+        // 2. Generate glitchspeak from spoken text
+        let firstWord = words[0] || '~';
         let corrupted = corruptText(text, 0.4);
-        let firstWord = corrupted.split(/\s+/)[0] || '~';
         let glitchWord = generateGlitchspeak(firstWord);
         broadcastGlitchspeak(glitchWord);
 
-        // Voice analysis for visual marks
-        let words = text.split(/\s+/);
-        let wordCount = words.length;
-        let wordsPerSec = wordCount / max(1, text.length / 15); // rough speed
-        let density = constrain(wordsPerSec * 2, 2, 12);
+        // 3. Grid disturbance (voice disturbs the grid)
+        let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        let disturbRadius = map(volume, 0, 1, 60, 250, true);
+        let disturbStrength = map(volume, 0, 1, 0.2, 1, true);
+        for (let gl of gridLines) gl.applyDisturbance(gx, gy, disturbStrength);
+        // Additional disturbance at offset points for a full "ring"
+        for (let a = 0; a < TWO_PI; a += PI / 3) {
+            let dx = gx + cos(a) * disturbRadius * 0.5;
+            let dy = gy + sin(a) * disturbRadius * 0.5;
+            for (let gl of gridLines) gl.applyDisturbance(dx, dy, disturbStrength * 0.4);
+        }
 
-        for (let i = 0; i < 6; i++) {
+        // 4. Ghost interaction (voice disturbs ghosts)
+        let ghostRadius = map(volume, 0, 1, 100, 350, true);
+        for (let g of ghosts) {
+            if (g.points.length === 0) continue;
+            let mid = g.points[floor(g.points.length / 2)];
+            if (mid && dist(mid.x, mid.y, gx, gy) < ghostRadius) {
+                let gDist = 1 - dist(mid.x, mid.y, gx, gy) / ghostRadius;
+                if (gDist > 0.3 && Math.random() < gDist) {
+                    g.flaring = true;
+                    g.flareDuration = max(g.flareDuration || 0, floor(20 + gDist * 40));
+                }
+            }
+        }
+
+        // 5. Energy consumption
+        let energyCost = wordCount * 0.1 * (1 + volume * 0.5);
+        energy = max(0, energy - energyCost);
+        localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
+
+        // 6. Generate voice marks using current stroke type
+        let markCount = min(wordCount * 2 + floor(density), 20);
+        let pitchNorm = pitch > 0 ? constrain(pitch / 800, 0, 1) : random();
+        let isSpeakMode = currentMode === MODES.SPEAK;
+        if (isSpeakMode || frameCounter % 2 === 0) {
+            for (let i = 0; i < markCount; i++) {
+                let mx = gx + random(-80 - volume * 60, 80 + volume * 60);
+                let my = gy + random(-80 - volume * 60, 80 + volume * 60);
+                let markSize = map(volume, 0, 1, 2, 18, true) * (0.5 + random() * 0.7);
+                if (energy < 20) markSize *= 0.5;
+                // Pitch → color (low = warm, high = cool)
+                let r = constrain((1 - pitchNorm) * 220 + 35, 20, 255);
+                let g = constrain(100 + noise(i * 0.3) * 80 - volume * 40, 20, 255);
+                let b = constrain(pitchNorm * 220 + 35, 20, 255);
+                let markAlpha = random(80, 160) * (energy < 20 ? 0.5 : 1);
+                drawVoiceMark(currentStrokeType, mx, my, markSize, r, g, b, markAlpha);
+            }
+            // Corrupted transcript faintly beneath
+            fill(180, 140, 160, 25 + volume * 20);
+            noStroke();
+            textFont('Courier New');
+            textSize(6);
+            textAlign(CENTER, CENTER);
+            text(corruptText(text, 0.6), mouseX + random(-4, 4), mouseY + 22);
+        }
+
+        // 7. Shockwave (voice as a physical force)
+        let sw = new Shockwave(gx + random(-50, 50), gy + random(-50, 50));
+        sw.maxRadius = 200 + volume * 300;
+        sw.life = 40 + floor(volume * 30);
+        sw.maxLife = sw.life;
+        shockwaves.push(sw);
+
+        // 8. Grid speech response (grid "hears" voice)
+        if (volume > 0.3 || wordCount > 3) {
+            let responses = ['h34rd', 'v01c3', '3ch0', 'sp34k', 'l1st3n', 'r3ply', 'h34r', 'y3s'];
+            let respWord = generateGlitchspeak(responses[floor(random(responses.length))]);
+            let line = gridLines[floor(random(gridLines.length))];
+            if (line) line.speak(respWord);
+        }
+
+        // 9. Create noise text for voice
+        for (let i = 0; i < min(3 + floor(volume * 3), 6); i++) {
             let t = new NoiseText(
-                mouseX + random(-250, 250), mouseY + random(-250, 250),
-                i === 0 ? '\u2726 ' + glitchWord + ' \u2726' : generateGlitchspeak(corrupted.split(/\s+/)[i % 3] || 'v01d'),
+                mouseX + random(-200, 200), mouseY + random(-200, 200),
+                i === 0 ? '\u2726 ' + glitchWord + ' \u2726' : generateGlitchspeak(corrupted.split(/\s+/)[i % max(1, words.length)] || 'v01d'),
                 'voice'
             );
             if (noiseTexts.length >= CFG.maxNoiseTexts) noiseTexts.shift();
             noiseTexts.push(t);
         }
-
-        // Visual marks from voice (Speak mode enhances this)
-        if (currentMode === MODES.SPEAK || frameCounter % 2 === 0) {
-            for (let i = 0; i < density; i++) {
-                let gx = mouseX - scrollX + random(-80, 80);
-                let gy = mouseY - scrollY + random(-80, 80);
-                let markSize = random(2, 8) * constrain(density / 4, 0.5, 2);
-                // Pitch → color (simulated: random warm↔cool)
-                let warm = random();
-                let r = warm * 200 + 55;
-                let g = random(60, 180);
-                let b = (1 - warm) * 200 + 55;
-                noStroke();
-                fill(r, g, b, random(60, 120));
-                rect(gx + scrollX, gy + scrollY, markSize, markSize);
-            }
-            // Faint text beneath
-            fill(180, 140, 160, 30);
-            noStroke();
-            textFont('Courier New');
-            textSize(6);
-            textAlign(CENTER, CENTER);
-            text(corruptText(text, 0.6), mouseX + random(-3, 3), mouseY + 20);
-        }
-
-        let sw = new Shockwave(mouseX - scrollX + random(-100, 100), mouseY - scrollY + random(-100, 100));
-        sw.maxRadius = 400; sw.life = 55; sw.maxLife = 55;
-        shockwaves.push(sw);
     }
 
     // ─── p5: setup ──────────────────────────────────────────────────
@@ -1384,8 +1580,17 @@
             localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
         }
 
+        // ─── Continuous voice level sampling ───
+        getVolume();
+
         // ─── Update ───
-        for (let gl of gridLines) gl.update();
+        let voiceSpeedMul = (voiceActive && frameCount - lastVoiceTime < 60) ? 1 + voicePitch / 2000 : 1;
+        for (let gl of gridLines) {
+            let origSpeed = gl.speed;
+            gl.speed = origSpeed * voiceSpeedMul;
+            gl.update();
+            gl.speed = origSpeed;
+        }
         for (let s of strokes) s.update();
         for (let nt of noiseTexts) nt.update();
         for (let sw of shockwaves) sw.update();
@@ -1533,6 +1738,23 @@
             textSize(9);
             textAlign(CENTER, CENTER);
             text(nt.text, nt.x, nt.y + random(-1, 1));
+        }
+
+        // ── Voice activity indicator ──
+        if (voiceActive && frameCount - lastVoiceTime < 30) {
+            let vAlpha = map(frameCount - lastVoiceTime, 0, 30, 60, 0);
+            let vRad = 20 + voiceVolumeSmooth * 60;
+            let pitchHue = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
+            let vr = (1 - pitchHue) * 200 + 55;
+            let vb = pitchHue * 200 + 55;
+            noFill();
+            stroke(vr, 120, vb, vAlpha);
+            strokeWeight(1.5);
+            ellipse(mouseX, mouseY, vRad * 2, vRad * 2);
+            if (voiceVolumeSmooth > 0.1) {
+                stroke(vr, 120, vb, vAlpha * 0.5);
+                ellipse(mouseX, mouseY, vRad * 3, vRad * 3);
+            }
         }
     }
 
