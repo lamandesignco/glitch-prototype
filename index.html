@@ -2234,6 +2234,9 @@
         translate(screenShakeX, screenShakeY);
         for (let gl of gridLines) gl.display();
 
+        // ── Floating glitchspeak text ──
+        for (let nt of noiseTexts) nt.display();
+
         // ── Code rift: grid transforms into code strings ──
         if (gridMode === 'code') {
             let alpha = 60 + sin(frameCount * 0.05) * 20;
