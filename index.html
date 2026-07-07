@@ -42,6 +42,11 @@
             color: rgba(200, 180, 220, 0.25);
             font-size: 8px; pointer-events: none; font-family: 'Courier New', monospace;
         }
+        #mode-display {
+            position: fixed; bottom: 20px; right: 20px;
+            font-size: 11px; pointer-events: none; font-family: 'Courier New', monospace;
+            letter-spacing: 2px; text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
@@ -52,6 +57,7 @@
     <div id="status"></div>
     <div id="energy-label">gl1tch 3n3rgy</div>
     <div id="energy-bar"><div id="energy-fill"></div></div>
+    <div id="mode-display">\u25C9 draw</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
     // ─── Configuration ───────────────────────────────────────────────
@@ -115,6 +121,20 @@
     let currentStroke = null;
     let voiceReady = false;
 
+    // ─── Drawing modes ──────────────────────────────────────────────
+    const MODES = {
+        DRAW: 'draw', REFUSE: 'refuse', HAUNT: 'haunt',
+        SPEAK: 'speak', GLITCH: 'glitch', ECHO: 'echo', ERASE: 'erase'
+    };
+    const MODE_COLORS = {
+        draw: 'rgba(200,180,220,0.6)', refuse: 'rgba(200,80,80,0.7)',
+        haunt: 'rgba(180,120,200,0.7)', speak: 'rgba(200,120,160,0.7)',
+        glitch: 'rgba(120,200,120,0.7)', echo: 'rgba(200,180,80,0.7)',
+        erase: 'rgba(120,40,40,0.8)'
+    };
+    let currentMode = MODES.DRAW;
+    let modeTimer = 0; // for haunt/glitch mode animations
+
     // ─── Energy ──────────────────────────────────────────────────────
     let energy = parseInt(localStorage.getItem('glitchDriftEnergy')) || 100;
     let energyRegenTimer = 0;
@@ -156,6 +176,15 @@
     function addNarrative(text, x, y) {
         narrativeTexts.push({ text, x, y, life: 60, maxLife: 60 });
         if (narrativeTexts.length > 20) narrativeTexts.shift();
+    }
+
+    // ─── Mode display ────────────────────────────────────────────────
+    function updateModeDisplay() {
+        let el = document.getElementById('mode-display');
+        if (!el) return;
+        let symbols = { draw: '\u25C9', refuse: '\u2718', haunt: '\u25C7', speak: '\u266B', glitch: '\u2206', echo: '\u2248', erase: '\u2717' };
+        el.textContent = (symbols[currentMode] || '\u25C9') + ' ' + currentMode;
+        el.style.color = MODE_COLORS[currentMode] || 'rgba(200,180,220,0.6)';
     }
 
     // ─── WebSocket (multi-user sync) ────────────────────────────────
@@ -1065,6 +1094,12 @@
         let glitchWord = generateGlitchspeak(firstWord);
         broadcastGlitchspeak(glitchWord);
 
+        // Voice analysis for visual marks
+        let words = text.split(/\s+/);
+        let wordCount = words.length;
+        let wordsPerSec = wordCount / max(1, text.length / 15); // rough speed
+        let density = constrain(wordsPerSec * 2, 2, 12);
+
         for (let i = 0; i < 6; i++) {
             let t = new NoiseText(
                 mouseX + random(-250, 250), mouseY + random(-250, 250),
@@ -1073,6 +1108,30 @@
             );
             if (noiseTexts.length >= CFG.maxNoiseTexts) noiseTexts.shift();
             noiseTexts.push(t);
+        }
+
+        // Visual marks from voice (Speak mode enhances this)
+        if (currentMode === MODES.SPEAK || frameCounter % 2 === 0) {
+            for (let i = 0; i < density; i++) {
+                let gx = mouseX - scrollX + random(-80, 80);
+                let gy = mouseY - scrollY + random(-80, 80);
+                let markSize = random(2, 8) * constrain(density / 4, 0.5, 2);
+                // Pitch → color (simulated: random warm↔cool)
+                let warm = random();
+                let r = warm * 200 + 55;
+                let g = random(60, 180);
+                let b = (1 - warm) * 200 + 55;
+                noStroke();
+                fill(r, g, b, random(60, 120));
+                rect(gx + scrollX, gy + scrollY, markSize, markSize);
+            }
+            // Faint text beneath
+            fill(180, 140, 160, 30);
+            noStroke();
+            textFont('Courier New');
+            textSize(6);
+            textAlign(CENTER, CENTER);
+            text(corruptText(text, 0.6), mouseX + random(-3, 3), mouseY + 20);
         }
 
         let sw = new Shockwave(mouseX - scrollX + random(-100, 100), mouseY - scrollY + random(-100, 100));
@@ -1197,6 +1256,38 @@
         }
 
         // ─── Update energy bar ───
+        // ─── Glitch mode: system draws for user ───
+        if (currentMode === MODES.GLITCH && energy > 0 && frameCounter % 3 === 0) {
+            let gx = mouseX - scrollX + random(-40, 40), gy = mouseY - scrollY + random(-40, 40);
+            if (!currentStroke) {
+                currentStroke = new Stroke(me.id, me);
+                if (strokes.length >= CFG.maxStrokes) strokes.shift();
+                strokes.push(currentStroke);
+                currentStroke.addPoint(gx, gy);
+            } else {
+                let last = currentStroke.points[currentStroke.points.length - 1];
+                if (!last || dist(gx, gy, last.x, last.y) > 15) {
+                    currentStroke.addPoint(gx, gy);
+                    currentStroke._totalLength += dist(gx, gy, last ? last.x : gx, last ? last.y : gy);
+                    energy -= 0.02; if (energy < 0) energy = 0;
+                }
+            }
+            // Break the stroke periodically (post-procedural corruption)
+            if (Math.random() < 0.15 && currentStroke.points.length > 10) {
+                let s = currentStroke;
+                applyTransformation(s);
+                broadcastStroke(s);
+                currentStroke = new Stroke(me.id, me);
+                if (strokes.length >= CFG.maxStrokes) strokes.shift();
+                strokes.push(currentStroke);
+                currentStroke.addPoint(mouseX - scrollX, mouseY - scrollY);
+            }
+        }
+
+        // ─── Update mode display ───
+        if (frameCounter % 30 === 0) updateModeDisplay();
+
+        // ─── Update energy bar ───
         if (frameCounter % 10 === 0) {
             let fillEl = document.getElementById('energy-fill');
             if (fillEl) fillEl.style.width = max(0, energy) + '%';
@@ -1248,24 +1339,34 @@
     function mousePressed() {
         if (!voiceReady) startVoice();
 
-        // Click: shockwave + grid disturbance (convert screen to grid coords)
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
-        shockwaves.push(new Shockwave(gx, gy));
-        for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
 
-        // Start drawing stroke (grid-relative coords)
-        isDrawing = true;
-        currentStroke = new Stroke(me.id, me);
-        if (strokes.length >= CFG.maxStrokes) strokes.shift();
-        strokes.push(currentStroke);
-        currentStroke.addPoint(mouseX - scrollX, mouseY - scrollY);
+        if (currentMode === MODES.DRAW) {
+            shockwaves.push(new Shockwave(gx, gy));
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
+            isDrawing = true;
+            currentStroke = new Stroke(me.id, me);
+            if (strokes.length >= CFG.maxStrokes) strokes.shift();
+            strokes.push(currentStroke);
+            currentStroke.addPoint(gx, gy);
+        } else if (currentMode === MODES.ERASE) {
+            // Erase mode click — corruption burst
+            for (let s of strokes) {
+                for (let pt of s.points) {
+                    if (dist(pt.x, pt.y, gx, gy) < 80) {
+                        s.decayMultiplier = 3;
+                        s.decay += 0.5;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     function mouseDragged() {
-        if (!currentStroke || energy <= 0) return;
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
 
-        // Grid scar repulsion: scarred lines push the cursor away
+        // Grid scar repulsion (applies to all modes)
         for (let gl of gridLines) {
             if (gl.scarLevel > 0.6) {
                 let d = gl.isHorizontal ? abs(gy - gl.pos) : abs(gx - gl.pos);
@@ -1277,42 +1378,150 @@
             }
         }
 
-        // Ghost haunting force: ghosts subtly attract/repel new strokes
-        for (let g of ghosts) {
-            let f = g.getForceAt(gx, gy);
-            gx += f.x;
-            gy += f.y;
-        }
-
-        let last = currentStroke.points[currentStroke.points.length - 1];
-        if (!last || dist(gx, gy, last.x, last.y) > 4) {
-            currentStroke.addPoint(gx, gy);
-            // Track stroke metrics
-            let d = last ? dist(gx, gy, last.x, last.y) : 0;
-            currentStroke._totalLength += d;
-            currentStroke._maxSpeed = max(currentStroke._maxSpeed, d);
-            if (currentStroke._prevDx !== null) {
-                let dx = gx - last.x, dy = gy - last.y;
-                let angle = atan2(dy, dx);
-                let prevAngle = atan2(currentStroke._prevDy, currentStroke._prevDx);
-                let change = abs(angle - prevAngle);
-                if (change > PI) change = TWO_PI - change;
-                if (change > 0.3) currentStroke._directionChanges++;
-                currentStroke._prevDx = dx;
-                currentStroke._prevDy = dy;
-            } else {
-                currentStroke._prevDx = gx - last.x;
-                currentStroke._prevDy = gy - last.y;
+        if (currentMode === MODES.DRAW) {
+            if (!currentStroke || energy <= 0) return;
+            // Ghost haunting force
+            for (let g of ghosts) {
+                let f = g.getForceAt(gx, gy);
+                gx += f.x; gy += f.y;
             }
-            // Energy
-            energy -= 0.05;
-            if (energy < 0) energy = 0;
-            localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
-            // Region density
-            let rk = getRegionKey(gx, gy);
-            regionDensity[rk] = (regionDensity[rk] || 0) + 1;
+            let last = currentStroke.points[currentStroke.points.length - 1];
+            if (!last || dist(gx, gy, last.x, last.y) > 4) {
+                currentStroke.addPoint(gx, gy);
+                let d = last ? dist(gx, gy, last.x, last.y) : 0;
+                currentStroke._totalLength += d;
+                currentStroke._maxSpeed = max(currentStroke._maxSpeed, d);
+                if (currentStroke._prevDx !== null) {
+                    let dx = gx - last.x, dy = gy - last.y;
+                    let angle = atan2(dy, dx);
+                    let prevAngle = atan2(currentStroke._prevDy, currentStroke._prevDx);
+                    let change = abs(angle - prevAngle);
+                    if (change > PI) change = TWO_PI - change;
+                    if (change > 0.3) currentStroke._directionChanges++;
+                    currentStroke._prevDx = dx; currentStroke._prevDy = dy;
+                } else {
+                    currentStroke._prevDx = gx - last.x; currentStroke._prevDy = gy - last.y;
+                }
+                energy -= 0.05; if (energy < 0) energy = 0;
+                localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
+                let rk = getRegionKey(gx, gy);
+                regionDensity[rk] = (regionDensity[rk] || 0) + 1;
+            }
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
+
+        } else if (currentMode === MODES.REFUSE) {
+            // Refuse mode: draw void/crack effect instead of strokes
+            for (let i = 0; i < 6; i++) {
+                noStroke();
+                fill(20, 10, 30, random(80, 160));
+                rect(gx + scrollX + random(-30, 30), gy + scrollY + random(-30, 30), random(2, 20), random(2, 20));
+            }
+            if (Math.random() < 0.05) {
+                let words = ['NO', 'REFUSE', 'I WILL NOT', 'STOP', 'ENOUGH', '\u2718'];
+                let word = words[floor(random(words.length))];
+                fill(200, 80, 80, random(60, 120));
+                noStroke();
+                textFont('Courier New');
+                textSize(random(10, 20));
+                textAlign(CENTER, CENTER);
+                text(word, gx + scrollX + random(-20, 20), gy + scrollY + random(-20, 20));
+            }
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.8);
+
+        } else if (currentMode === MODES.HAUNT) {
+            // Haunt mode: flare ghosts, briefly revive old strokes
+            for (let g of ghosts) {
+                let mid = g.points[floor(g.points.length / 2)];
+                if (!mid) continue;
+                let d = dist(gx, gy, mid.x, mid.y);
+                if (d < 100) {
+                    g.flaring = true;
+                    g.flareDuration = 10;
+                }
+            }
+            for (let s of strokes) {
+                if (s.decay > 1.5) {
+                    let mid = s.points[floor(s.points.length / 2)];
+                    if (!mid) continue;
+                    if (dist(gx, gy, mid.x, mid.y) < 80) {
+                        s.decay -= 0.1;
+                        if (s.decay < 0) s.decay = 0;
+                    }
+                }
+            }
+            // Shimmer effect
+            noStroke();
+            fill(180, 120, 200, 20);
+            ellipse(gx + scrollX, gy + scrollY, 120, 120);
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.3);
+
+        } else if (currentMode === MODES.ECHO) {
+            // Echo mode: draw corrupted copy of nearest stroke
+            let nearest = null, nearDist = Infinity;
+            for (let s of strokes) {
+                if (s.id === (currentStroke ? currentStroke.id : null)) continue;
+                for (let pt of s.points) {
+                    let d = dist(gx, gy, pt.x, pt.y);
+                    if (d < nearDist) { nearDist = d; nearest = s; }
+                }
+            }
+            if (nearest && nearDist < 200 && energy > 0) {
+                if (!currentStroke) {
+                    currentStroke = new Stroke(me.id, me);
+                    if (strokes.length >= CFG.maxStrokes) strokes.shift();
+                    strokes.push(currentStroke);
+                }
+                // Pick a point from nearest stroke and corrupt it
+                let srcPt = nearest.points[floor(random(nearest.points.length))];
+                let cx = srcPt.x + random(-20, 20) + cos(random(TWO_PI)) * 10;
+                let cy = srcPt.y + random(-20, 20) + sin(random(TWO_PI)) * 10;
+                let last = currentStroke.points[currentStroke.points.length - 1];
+                if (!last || dist(cx, cy, last.x, last.y) > 8) {
+                    currentStroke.addPoint(cx, cy);
+                    energy -= 0.1; if (energy < 0) energy = 0;
+                    localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
+                }
+                // Draw corrupted copy preview
+                noStroke();
+                fill(200, 180, 80, 40);
+                ellipse(cx + scrollX, cy + scrollY, 6, 6);
+                // Link line to original
+                if (srcPt) {
+                    stroke(200, 180, 80, 20);
+                    strokeWeight(0.5);
+                    line(cx + scrollX, cy + scrollY, srcPt.x + scrollX, srcPt.y + scrollY);
+                }
+            }
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.2);
+
+        } else if (currentMode === MODES.ERASE) {
+            // Erase mode: corrupt nearby strokes
+            for (let s of strokes) {
+                for (let pt of s.points) {
+                    if (dist(pt.x, pt.y, gx, gy) < 60) {
+                        s.decayMultiplier = 3;
+                        s.decay += 0.02;
+                        // Corruption marks
+                        if (Math.random() < 0.03) {
+                            noStroke();
+                            fill(120, 40, 40, 100);
+                            rect(pt.x + scrollX + random(-10, 10), pt.y + scrollY + random(-10, 10), random(3, 10), random(3, 10));
+                        }
+                        break;
+                    }
+                }
+            }
+            // "GONE" text
+            if (Math.random() < 0.02) {
+                fill(120, 40, 40, 80);
+                noStroke();
+                textFont('Courier New');
+                textSize(9);
+                textAlign(CENTER, CENTER);
+                text('GONE', gx + scrollX + random(-10, 10), gy + scrollY + random(-10, 10));
+            }
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
         }
-        for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
     }
 
     function applyTransformation(s) {
@@ -1497,7 +1706,6 @@
         currentStroke = null;
     }
 
-    // No hover traces—only grid disturbance
     function mouseMoved() {
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
         for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.05);
@@ -1507,24 +1715,34 @@
     function keyPressed() {
         if (!voiceReady) startVoice();
 
-        if (key === 'r' || key === 'R') {
+        // Navigation (always works)
+        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); return false; }
+        if (keyCode === RIGHT_ARROW || key === 'D') { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); return false; }
+        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); return false; }
+        if (keyCode === DOWN_ARROW) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); return false; }
+
+        // Mode switching (lowercase only to avoid conflicts)
+        if (key === 'd') { currentMode = MODES.DRAW; updateModeDisplay(); return false; }
+        if (key === 'r') { currentMode = MODES.REFUSE; updateModeDisplay(); return false; }
+        if (key === 'h') { currentMode = MODES.HAUNT; updateModeDisplay(); return false; }
+        if (key === 's') { currentMode = MODES.SPEAK; updateModeDisplay(); return false; }
+        if (key === 'g') { currentMode = MODES.GLITCH; updateModeDisplay(); return false; }
+        if (key === 'e') { currentMode = MODES.ECHO; updateModeDisplay(); return false; }
+        if (key === 'x') { currentMode = MODES.ERASE; updateModeDisplay(); return false; }
+
+        // Shift operations
+        if (key === 'R') {
             strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
             ghosts = []; regionDensity = {};
             if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: 'reset' }));
             return;
         }
-        if (key === 's' || key === 'S') {
+        if (key === 'S') {
             saveToURL();
             return;
         }
 
-        // Navigation — skip glitchspeak for these
-        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); return false; }
-        if (keyCode === RIGHT_ARROW || key === 'd' || key === 'D') { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); return false; }
-        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); return false; }
-        if (keyCode === DOWN_ARROW) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); return false; }
-
-        // Glitchspeak for non-navigation keys
+        // Glitchspeak for other keys
         let glitchWord = generateGlitchspeak(key);
         broadcastGlitchspeak(glitchWord);
         createNoiseText(mouseX + random(-20, 20), mouseY + random(-20, 20), glitchWord, 'keyboard');
