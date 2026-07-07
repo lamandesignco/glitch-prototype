@@ -611,23 +611,27 @@
                 voidInstability = 1 - this.voidState.timer / this.voidState.duration;
                 // Deep void: render pure static noise, skip normal drawing
                 if (voidInstability > 0.4) {
+                    // Voice boost: loud speaking during void amazes the transformation
+                    let voiceBoost = (voiceActive && frameCount - lastVoiceTime < 30) ? 1 + voiceVolumeSmooth * 2 : 1;
+                    let jitterMag = (12 + voiceBoost * 20) * voidInstability;
+                    let fillRate = voidInstability * 0.9 * voiceBoost;
                     for (let pt of this.points) {
-                        if (Math.random() < voidInstability * 0.9) {
+                        if (Math.random() < fillRate) {
                             noStroke();
                             fill(
-                                180 + random(-60, 60),
-                                160 + random(-60, 60),
-                                220 + random(-60, 60),
-                                random(60, 180)
+                                180 + random(-60 * voiceBoost, 60 * voiceBoost),
+                                160 + random(-60 * voiceBoost, 60 * voiceBoost),
+                                220 + random(-60 * voiceBoost, 60 * voiceBoost),
+                                random(60, 180 * voiceBoost)
                             );
-                            rect(pt.x + scrollX + random(-12, 12), pt.y + scrollY + random(-12, 12), random(1, 5), random(1, 5));
+                            rect(pt.x + scrollX + random(-jitterMag, jitterMag), pt.y + scrollY + random(-jitterMag, jitterMag), random(1, 5 * voiceBoost), random(1, 5 * voiceBoost));
                         }
                     }
                     // System reveal text fragments (Menkman: glitch reveals hidden structures)
-                    if (Math.random() < voidInstability * 0.08) {
+                    if (Math.random() < voidInstability * 0.08 * voiceBoost) {
                         let mid = this.points[floor(this.points.length / 2)];
                         if (mid) {
-                            fill(180, 160, 200, random(40, 100));
+                            fill(180, 160, 200, random(40, 100 * voiceBoost));
                             noStroke();
                             textFont('Courier New');
                             textSize(7);
@@ -635,19 +639,32 @@
                             text(getSystemReveal(), mid.x + scrollX + random(-20, 20), mid.y + scrollY + random(-20, 20));
                         }
                     }
+                    // Voice boost indicator
+                    if (voiceBoost > 1.5 && Math.random() < voidInstability * 0.1) {
+                        let mid = this.points[floor(this.points.length / 2)];
+                        if (mid) {
+                            fill(200, 120, 255, 80);
+                            noStroke();
+                            textFont('Courier New');
+                            textSize(8);
+                            textAlign(CENTER, CENTER);
+                            text('\u266B v01c3 4mpl1f13d', mid.x + scrollX + random(-10, 10), mid.y + scrollY + random(-10, 10));
+                        }
+                    }
                     return;
                 }
                 // Late void: noise mixed with emerging stroke
+                let lateVoiceBoost = (voiceActive && frameCount - lastVoiceTime < 30) ? 1 + voiceVolumeSmooth * 1.5 : 1;
                 for (let pt of this.points) {
-                    if (Math.random() < (1 - voidInstability) * 0.5) {
+                    if (Math.random() < (1 - voidInstability) * 0.5 * lateVoiceBoost) {
                         noStroke();
-                        fill(200, 180, 220, random(30, 90));
-                        rect(pt.x + scrollX + random(-8, 8), pt.y + scrollY + random(-8, 8), random(1, 3), random(1, 3));
+                        fill(200, 180, 220, random(30, 90 * lateVoiceBoost));
+                        rect(pt.x + scrollX + random(-8 * lateVoiceBoost, 8 * lateVoiceBoost), pt.y + scrollY + random(-8 * lateVoiceBoost, 8 * lateVoiceBoost), random(1, 3 * lateVoiceBoost), random(1, 3 * lateVoiceBoost));
                     }
                 }
                 // Show transformation type emerging
                 let mid = this.points[floor(this.points.length / 2)];
-                if (mid && Math.random() < (1 - voidInstability) * 0.15) {
+                if (mid && Math.random() < (1 - voidInstability) * 0.15 * lateVoiceBoost) {
                     let metricsLabel = '';
                     let avgSpd = constrain(this._totalLength / max(1, this.points.length), 0, 30);
                     let spdLabel = avgSpd > 12 ? 'fast' : avgSpd > 5 ? 'medium' : 'slow';
@@ -1406,8 +1423,8 @@
             }
         }
 
-        // 5. Energy consumption
-        let energyCost = wordCount * 0.1 * (1 + volume * 0.5);
+        // 5. Energy consumption (voice as labor)
+        let energyCost = volume * 2 + wordCount * 0.1;
         energy = max(0, energy - energyCost);
         localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
 
@@ -1507,7 +1524,7 @@
         let vsEl = document.getElementById('voice-status');
         if (vsEl) {
             if (audioCtx && analyser) {
-                let speaking = voiceVolumeSmooth > 0.12;
+                let speaking = voiceVolumeSmooth > 0.08;
                 let speechReady = voiceReady && recognition !== null;
                 if (speaking) vsEl.textContent = '\u266B v01c3';
                 else if (speechReady) vsEl.textContent = 'v01c3: r3ady';
@@ -1519,22 +1536,64 @@
             }
         }
 
-        // ─── Continuous voice detection + mark generation ───
+        // ─── Continuous voice detection + generative effects ───
         getVolume();
         let speakingNow = voiceVolumeSmooth > 0.08;
         if (speakingNow) {
             voiceActive = true;
             lastVoiceTime = frameCount;
-            // Generate voice marks from volume every ~4 frames when speaking
+            let gx = mouseX - scrollX, gy = mouseY - scrollY;
+            let vol = voiceVolumeSmooth;
+            let pitchN = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
+
+            // Energy drain (voice as labor)
+            let energyCost = vol * 2;
+            energy = max(0, energy - energyCost * 0.02);
+            if (frameCounter % 60 === 0) localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
+
+            // Grid disturbance (voice as resistance) — every 6 frames
+            if (frameCounter % 6 === 0) {
+                let distStr = map(vol, 0, 1, 0.15, 0.7, true);
+                for (let gl of gridLines) gl.applyDisturbance(gx, gy, distStr);
+                for (let a = 0; a < TWO_PI; a += PI / 3) {
+                    let dx = gx + cos(a) * (50 + vol * 100);
+                    let dy = gy + sin(a) * (50 + vol * 100);
+                    for (let gl of gridLines) gl.applyDisturbance(dx, dy, distStr * 0.3);
+                }
+            }
+
+            // Ghost flaring (voice as haunting) — every 10 frames
+            if (frameCounter % 10 === 0) {
+                let gRad = 80 + vol * 200;
+                for (let g of ghosts) {
+                    if (g.points.length === 0) continue;
+                    let mid = g.points[floor(g.points.length / 2)];
+                    if (mid && dist(mid.x, mid.y, gx, gy) < gRad) {
+                        let gDist = 1 - dist(mid.x, mid.y, gx, gy) / gRad;
+                        if (gDist > 0.2 && Math.random() < gDist * 0.3) {
+                            g.flaring = true;
+                            g.flareDuration = max(g.flareDuration || 0, floor(10 + gDist * 30));
+                        }
+                    }
+                }
+            }
+
+            // Grid speech (voice as conversation) — occasional
+            if (frameCounter % 60 === 0 && vol > 0.25 && Math.random() < 0.3) {
+                let responses = ['h34rd', 'v01c3', '3ch0', 'sp34k', 'l1st3n', 'r3ply', 'h34r', 'y3s', 'n0153', 'r3s1st'];
+                let respWord = generateGlitchspeak(responses[floor(random(responses.length))]);
+                let line = gridLines[floor(random(gridLines.length))];
+                if (line) line.speak(respWord);
+            }
+
+            // Generate voice marks from volume every ~4 frames
             if (frameCounter % 4 === 0 && voiceMarks.length < 180) {
-                let gx = mouseX - scrollX, gy = mouseY - scrollY;
-                let vol = voiceVolumeSmooth;
-                let pitchN = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
-                let count = 1 + floor(vol * 4);
+                let count = 1 + floor(vol * 5);
                 for (let i = 0; i < count; i++) {
-                    let mx = gx + random(-60, 60);
-                    let my = gy + random(-60, 60);
-                    let markSize = map(vol, 0, 1, 1.5, 14, true) * (0.6 + random() * 0.6);
+                    let mx = gx + random(-60 - vol * 40, 60 + vol * 40);
+                    let my = gy + random(-60 - vol * 40, 60 + vol * 40);
+                    let markSize = map(vol, 0, 1, 1.5, 16, true) * (0.6 + random() * 0.6);
+                    if (energy < 20) markSize *= 0.5;
                     let r = constrain((1 - pitchN) * 220 + 35, 20, 255);
                     let gn = constrain(100 + noise(i * 0.3) * 80 - vol * 40, 20, 255);
                     let b = constrain(pitchN * 220 + 35, 20, 255);
@@ -1543,6 +1602,32 @@
                         r, g: gn, b, alpha: random(60, 140), life: VOICE_MARK_LIFETIME
                     });
                 }
+            }
+
+            // Sound particles (voice visualization every 3 frames)
+            if (frameCounter % 3 === 0 && particles.length < CFG.particleCap - 20) {
+                let pCount = 1 + floor(vol * 3);
+                let pr = (1 - pitchN) * 220 + 35;
+                let pb = pitchN * 220 + 35;
+                for (let i = 0; i < pCount; i++) {
+                    let ang = random(TWO_PI);
+                    let spd = 0.3 + vol * 2;
+                    let pLife = 15 + floor(vol * 25);
+                    particles.push(new Particle(
+                        gx + random(-10, 10), gy + random(-10, 10),
+                        cos(ang) * spd, sin(ang) * spd,
+                        pLife, random(0.5, 2.5), [pr, 120, pb]
+                    ));
+                }
+            }
+
+            // Shockwave (voice as physical force) — every 20 frames on sustained sound
+            if (frameCounter % 20 === 0 && vol > 0.2) {
+                let sw = new Shockwave(gx + random(-30, 30), gy + random(-30, 30));
+                sw.maxRadius = 80 + vol * 250;
+                sw.life = 20 + floor(vol * 25);
+                sw.maxLife = sw.life;
+                shockwaves.push(sw);
             }
         }
 
@@ -1797,20 +1882,56 @@
             text(nt.text, nt.x, nt.y + random(-1, 1));
         }
 
-        // ── Voice activity indicator ──
-        if (voiceActive && frameCount - lastVoiceTime < 30) {
-            let vAlpha = map(frameCount - lastVoiceTime, 0, 30, 60, 0);
-            let vRad = 20 + voiceVolumeSmooth * 60;
+        // ── Sound visualization (voice as generative force) ──
+        if (voiceActive && frameCount - lastVoiceTime < 40) {
+            let vAlpha = map(frameCount - lastVoiceTime, 0, 40, 80, 0);
+            let vol = voiceVolumeSmooth;
             let pitchHue = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
-            let vr = (1 - pitchHue) * 200 + 55;
-            let vb = pitchHue * 200 + 55;
+            let vr = (1 - pitchHue) * 220 + 35;
+            let vb = pitchHue * 220 + 35;
+            let vg = 100 + sin(frameCount * 0.02) * 40;
+
+            // Sound ring: pulses with volume, color shifts with pitch
+            let ringRad = 30 + vol * 80 + sin(frameCount * 0.1) * 5 * vol;
             noFill();
-            stroke(vr, 120, vb, vAlpha);
-            strokeWeight(1.5);
-            ellipse(mouseX, mouseY, vRad * 2, vRad * 2);
-            if (voiceVolumeSmooth > 0.1) {
-                stroke(vr, 120, vb, vAlpha * 0.5);
-                ellipse(mouseX, mouseY, vRad * 3, vRad * 3);
+            stroke(vr, vg, vb, vAlpha * 0.8);
+            strokeWeight(1 + vol * 2);
+            ellipse(mouseX, mouseY, ringRad * 2, ringRad * 2);
+            if (vol > 0.15) {
+                stroke(vr, vg, vb, vAlpha * 0.4);
+                strokeWeight(0.5);
+                ellipse(mouseX, mouseY, ringRad * 3, ringRad * 3);
+            }
+
+            // Sound wave: sine pattern emanating from cursor
+            let waveSteps = 12;
+            let waveAmp = 4 + vol * 20;
+            let waveFreq = 0.3 + pitchHue * 0.8;
+            noFill();
+            stroke(vr, vg, vb, vAlpha * 0.5);
+            strokeWeight(0.8);
+            beginShape();
+            for (let i = 0; i <= waveSteps; i++) {
+                let angle = (i / waveSteps) * TWO_PI;
+                let baseR = ringRad + 15;
+                let wave = sin(angle * waveFreq * 4 + frameCount * 0.1) * waveAmp;
+                let wx = mouseX + cos(angle) * (baseR + wave);
+                let wy = mouseY + sin(angle) * (baseR + wave);
+                curveVertex(wx, wy);
+            }
+            endShape(CLOSE);
+
+            // Glitchspeak text near cursor (sound as language)
+            if (frameCounter % 15 === 0 && Math.random() < 0.4) {
+                let word = generateGlitchspeak();
+                let tx = mouseX + random(-50, 50);
+                let ty = mouseY + random(-50, 50);
+                fill(vr, vg, vb, vAlpha * 0.4);
+                noStroke();
+                textFont('Courier New');
+                textSize(7 + vol * 4);
+                textAlign(CENTER, CENTER);
+                text(corruptText(word, 0.5), tx, ty);
             }
         }
     }
