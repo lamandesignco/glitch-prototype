@@ -1813,6 +1813,12 @@
                 r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
         }
 
+        // ─── Continuous scroll with arrow keys (hold to move) ───
+        if (keyIsDown(LEFT_ARROW)) { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); }
+        if (keyIsDown(RIGHT_ARROW)) { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); }
+        if (keyIsDown(UP_ARROW)) { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); }
+        if (keyIsDown(DOWN_ARROW)) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); }
+
         // ─── Voice status UI ───
         let vsEl = document.getElementById('voice-status');
         if (vsEl) {
@@ -1829,8 +1835,8 @@
             }
         }
 
-        // ─── Continuous energy drain + slow regen ───
-        energy -= 0.05;
+        // ─── Continuous energy drain (only when mouse is pressed) + slow regen ───
+        if (mouseIsPressed) energy -= 0.05;
         energy += 0.005;
         if (energy > 25) energy = 25;
         if (energy < 0) energy = 0;
@@ -2653,8 +2659,8 @@
         // Create new rect if sound is loud enough
         if (vol > threshold && !rectActive) {
             if (now - lastRectTime > rectInterval) {
-                let w = constrain(map(vol, threshold, 1.0, 10, 800), 10, 800);
-                let h = constrain(map(vol, threshold, 1.0, 10, 600), 10, 600);
+                let w = constrain(map(vol, threshold, 1.0, 10, width), 10, width);
+                let h = constrain(map(vol, threshold, 1.0, 10, height), 10, height);
                 currentRect = {
                     x: mouseX - w / 2,
                     y: mouseY - h / 2,
@@ -3108,12 +3114,6 @@
     // ─── Keyboard ────────────────────────────────────────────────────
     function keyPressed() {
         if (!voiceReady) startVoice();
-
-        // Navigation (always works)
-        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); return false; }
-        if (keyCode === RIGHT_ARROW || key === 'D') { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); return false; }
-        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); return false; }
-        if (keyCode === DOWN_ARROW) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); return false; }
 
         // Reset canvas
         if (key === 'r') {
