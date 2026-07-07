@@ -406,9 +406,16 @@
             }
             if (this.transformation === 'mutation') {
                 for (let i = 0; i < this.points.length; i++) {
-                    let angle = noise(i * 0.1, frameCount * 0.005, this.mutationPhase) * TWO_PI * 2;
-                    this.points[i].x += cos(angle) * 0.3;
-                    this.points[i].y += sin(angle) * 0.3;
+                    let angle = noise(i * 0.1, frameCount * 0.008, this.mutationPhase) * TWO_PI * 2;
+                    this.points[i].x += cos(angle) * 1.5;
+                    this.points[i].y += sin(angle) * 1.5;
+                }
+                // Occasional larger lurch
+                if (Math.random() < 0.01) {
+                    let idx = floor(random(this.points.length));
+                    let a = random(TWO_PI);
+                    this.points[idx].x += cos(a) * 20;
+                    this.points[idx].y += sin(a) * 20;
                 }
             }
             if (this.dataTimer > 0) this.dataTimer--;
@@ -441,23 +448,24 @@
                 if (Math.random() < voidInstability * 0.4) a = 0;
             }
 
-            // ── Resitance drift (applied each frame) ──
+            // ── Resistance drift (applied each frame) ──
             if (this.transformation === 'resistance') {
                 for (let gl of gridLines) {
                     for (let pt of this.points) {
                         let d = abs(gl.isHorizontal ? pt.y - gl.pos : pt.x - gl.pos);
-                        if (d < 60) {
-                            let force = (1 - d / 60) * 0.6;
+                        if (d < 80) {
+                            let force = (1 - d / 80) * 3;
                             let ang = gl.isHorizontal ? (Math.random() < 0.5 ? -HALF_PI : HALF_PI) : (Math.random() < 0.5 ? 0 : PI);
                             pt.x += cos(ang) * force;
                             pt.y += sin(ang) * force;
                         }
                     }
                 }
-                if (Math.random() < 0.005) {
+                if (Math.random() < 0.02) {
                     let idx = floor(random(this.points.length));
-                    this.points[idx].x += random(-30, 30);
-                    this.points[idx].y += random(-30, 30);
+                    let a = random(TWO_PI);
+                    this.points[idx].x += cos(a) * random(20, 50);
+                    this.points[idx].y += sin(a) * random(20, 50);
                 }
             }
 
@@ -943,7 +951,7 @@
             }
         }
 
-        // Choose transformation and initialize void state
+        // Choose transformation
         let roll = Math.random();
         let transformation;
 
@@ -959,22 +967,24 @@
             transformation = 'resistance';
         }
 
-        // Void state: flickers for 2-3s before settling into form
-        s.voidState = {
-            active: true,
-            timer: 0,
-            duration: 60 + floor(random(60)),
-            transformation: transformation,
-            originalPoints: s.points.map(pt => ({ x: pt.x, y: pt.y }))
-        };
+        // ═══ DRAMATIC INITIAL TRANSFORMATION BURST ═══
 
-        // Apply transformation after void
         if (transformation === 'glitchspeak') {
             s.transformation = 'glitchspeak';
-            let mid = s.points[floor(s.points.length / 2)] || s.points[0];
-            let word = generateGlitchspeak();
-            createNoiseText(mid.x + scrollX, mid.y + scrollY, word, 'generated');
-            broadcastGlitchspeak(word);
+            // Tear apart — every point displaced 20-80px
+            for (let pt of s.points) {
+                pt.x += random(-80, 80);
+                pt.y += random(-80, 80);
+            }
+            // Multiple words burst from along the stroke
+            let steps = max(3, floor(s.points.length / 8));
+            for (let i = 0; i < s.points.length; i += steps) {
+                let pt = s.points[i];
+                if (noiseTexts.length < CFG.maxNoiseTexts) {
+                    let word = generateGlitchspeak();
+                    createNoiseText(pt.x + scrollX + random(-40, 40), pt.y + scrollY + random(-40, 40), word, 'generated');
+                }
+            }
         } else if (transformation === 'fracture') {
             s.transformation = 'fracture';
             let numSegments = 2 + floor(random(3)); // 2-4
@@ -985,9 +995,11 @@
                 let end = (i === numSegments - 1) ? s.points.length : (i + 1) * segSize;
                 let sub = Stroke.deserialize(s.serialize());
                 sub.id = s.id + '_f' + i;
+                let angle = random(TWO_PI);
+                let dist = 80 + random(120); // 80-200px drift
                 sub.points = s.points.slice(start, end).map(pt => ({
-                    x: pt.x + cos(random(TWO_PI)) * random(8, 25),
-                    y: pt.y + sin(random(TWO_PI)) * random(8, 25)
+                    x: pt.x + cos(angle) * dist + random(-20, 20),
+                    y: pt.y + sin(angle) * dist + random(-20, 20)
                 }));
                 sub.revealTimer = 0;
                 sub.voidState = null;
@@ -998,13 +1010,48 @@
             }
         } else if (transformation === 'data') {
             s.transformation = 'data';
+            // Snap every point to a coarse grid — dissolve the original shape
+            for (let pt of s.points) {
+                pt.x = round(pt.x / 15) * 15 + random(-6, 6);
+                pt.y = round(pt.y / 15) * 15 + random(-6, 6);
+            }
             s.dataTimer = 90;
         } else if (transformation === 'mutation') {
             s.transformation = 'mutation';
+            // Initial violent burst — each point flies outward
+            for (let pt of s.points) {
+                let a = random(TWO_PI);
+                pt.x += cos(a) * random(15, 50);
+                pt.y += sin(a) * random(15, 50);
+            }
             s.mutationPhase = Math.random() * 1000;
         } else if (transformation === 'resistance') {
             s.transformation = 'resistance';
+            // Drastic repulsion from nearest grid intersection
+            for (let pt of s.points) {
+                let gx = round(pt.x / CFG.cellSize) * CFG.cellSize;
+                let gy = round(pt.y / CFG.cellSize) * CFG.cellSize;
+                let dx = pt.x - gx;
+                let dy = pt.y - gy;
+                let d = sqrt(dx * dx + dy * dy);
+                if (d < 80 && d > 0) {
+                    let force = (80 - d) / 80 * 100;
+                    pt.x += (dx / d) * force;
+                    pt.y += (dy / d) * force;
+                } else if (d === 0) {
+                    pt.x += random(-100, 100);
+                    pt.y += random(-100, 100);
+                }
+            }
         }
+
+        // Void state — shorter, transformation already applied
+        s.voidState = {
+            active: true,
+            timer: 0,
+            duration: 30 + floor(random(30)), // 0.5-1s
+            transformation: transformation
+        };
     }
 
     function mouseReleased() {
