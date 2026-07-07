@@ -135,6 +135,17 @@
     let currentMode = MODES.DRAW;
     let modeTimer = 0; // for haunt/glitch mode animations
 
+    // ─── Stroke types ───────────────────────────────────────────────
+    const STROKE_TYPES = { DATA: 'data', TREMBLE: 'tremble', NOISE: 'noise', GHOST: 'ghost', RESISTANCE: 'resistance', GLITCHSPEAK: 'glitchspeak' };
+    const STROKE_TYPE_LABELS = { data: 'd4ta', tremble: 'tr3mbl3', noise: 'n01s3', ghost: 'gh0st', resistance: 'r3s1st', glitchspeak: 'gl1tchsp34k' };
+    const STROKE_TYPE_COLORS = {
+        data: 'rgba(120,180,255,0.7)', tremble: 'rgba(200,180,120,0.7)',
+        noise: 'rgba(180,120,120,0.7)', ghost: 'rgba(160,200,200,0.5)',
+        resistance: 'rgba(200,120,80,0.7)', glitchspeak: 'rgba(200,160,200,0.7)'
+    };
+    const STROKE_TYPE_ORDER = ['data', 'tremble', 'noise', 'ghost', 'resistance', 'glitchspeak'];
+    let currentStrokeType = STROKE_TYPES.DATA;
+
     // ─── Energy ──────────────────────────────────────────────────────
     let energy = parseInt(localStorage.getItem('glitchDriftEnergy')) || 100;
     let energyRegenTimer = 0;
@@ -183,7 +194,8 @@
         let el = document.getElementById('mode-display');
         if (!el) return;
         let symbols = { draw: '\u25C9', refuse: '\u2718', haunt: '\u25C7', speak: '\u266B', glitch: '\u2206', echo: '\u2248', erase: '\u2717' };
-        el.textContent = (symbols[currentMode] || '\u25C9') + ' ' + currentMode;
+        let typeLabel = STROKE_TYPE_LABELS[currentStrokeType] || 'd4ta';
+        el.innerHTML = (symbols[currentMode] || '\u25C9') + ' ' + currentMode + ' <span style="color:' + (STROKE_TYPE_COLORS[currentStrokeType] || 'rgba(200,180,220,0.6)') + ';opacity:0.5">[' + typeLabel + ']</span>';
         el.style.color = MODE_COLORS[currentMode] || 'rgba(200,180,220,0.6)';
     }
 
@@ -508,10 +520,11 @@
     let strokeIdCounter = 0;
 
     class Stroke {
-        constructor(userId, userParams) {
+        constructor(userId, userParams, strokeType) {
             this.id = userId + '_' + (strokeIdCounter++);
             this.userId = userId;
             this.params = userParams;
+            this.strokeType = strokeType || 'data';
             this.points = [];
             this.timestamp = Date.now();
             this.decay = 0;
@@ -533,6 +546,9 @@
             this._prevDx = null;
             this._prevDy = null;
             this.energyMul = energy < 30 ? max(0.2, energy / 30) : 1;
+            if (this.strokeType === 'glitchspeak') {
+                this.glitchspeakWord = generateGlitchspeak();
+            }
         }
         addPoint(x, y) { this.points.push({ x, y }); }
 
@@ -723,62 +739,71 @@
                 if (this.transformation !== 'data') return; // data skeleton only
             }
 
-            // ── Main rendering loop ──
-            for (let i = 1; i < n; i++) {
-                let p1 = this.points[i - 1];
-                let p2 = this.points[i];
+            // ── Main rendering loop (branch on transformation vs stroke type) ──
+            if (this.transformation) {
+                // Transformation rendering (existing behavior)
+                for (let i = 1; i < n; i++) {
+                    let p1 = this.points[i - 1];
+                    let p2 = this.points[i];
 
-                let breakChance = this.refused ? 0.5 : 0.25;
-                if (Math.random() < breakChance) continue;
+                    let breakChance = this.refused ? 0.5 : 0.25;
+                    if (Math.random() < breakChance) continue;
 
-                let segDist = dist(p1.x, p1.y, p2.x, p2.y);
-                let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
+                    let segDist = dist(p1.x, p1.y, p2.x, p2.y);
+                    let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
 
-                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
-                let r = constrain(col[0] + shift * random(0.8, 1.2) + voidColorShift, 20, 255);
-                let g = constrain(col[1] + shift * random(0.6, 1.4) + voidColorShift, 20, 255);
-                let b = constrain(col[2] + shift * random(0.8, 1.2) + voidColorShift, 20, 255);
+                    let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                    let r = constrain(col[0] + shift * random(0.8, 1.2) + voidColorShift, 20, 255);
+                    let g = constrain(col[1] + shift * random(0.6, 1.4) + voidColorShift, 20, 255);
+                    let b = constrain(col[2] + shift * random(0.8, 1.2) + voidColorShift, 20, 255);
 
-                // Mutation: evolving color
-                if (this.transformation === 'mutation') {
-                    let hueShift = sin(frameCount * 0.01 + i * 0.1 + this.mutationPhase) * 30;
-                    r = constrain(r + hueShift, 20, 255);
-                    g = constrain(g - hueShift * 0.5, 20, 255);
-                    b = constrain(b + hueShift * 0.3, 20, 255);
+                    if (this.transformation === 'mutation') {
+                        let hueShift = sin(frameCount * 0.01 + i * 0.1 + this.mutationPhase) * 30;
+                        r = constrain(r + hueShift, 20, 255);
+                        g = constrain(g - hueShift * 0.5, 20, 255);
+                        b = constrain(b + hueShift * 0.3, 20, 255);
+                    }
+
+                    let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+                    let activeTremble = tremble;
+                    if (voidActive && Math.random() < voidInstability * 0.5) activeTremble *= 5;
+
+                    let ns = this.colorSeed + i * 0.5;
+                    let ox1 = (noise(ns, this.decay * 2) - 0.5) * activeTremble * speedFactor;
+                    let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
+                    let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * activeTremble * speedFactor;
+                    let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
+
+                    let segAlpha = a;
+                    if (this.refused && Math.random() < 0.15) segAlpha = 0;
+                    if (voidActive && Math.random() < voidInstability * 0.3) segAlpha = max(0, segAlpha - random(100));
+
+                    stroke(r, g, b, segAlpha);
+                    strokeWeight(max(0.3, segThick));
+                    line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
+
+                    if (stutter && i > 2) {
+                        stroke(255, 255, 255, segAlpha * 0.3);
+                        strokeWeight(1);
+                        line(p1.x + scrollX + random(-4, 4), p1.y + scrollY + random(-4, 4),
+                             this.points[i - 2].x + scrollX + random(-4, 4), this.points[i - 2].y + scrollY + random(-4, 4));
+                    }
+
+                    if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
+                        let angle = random(TWO_PI);
+                        let spd = 0.5 + random() * 1.5;
+                        particles.push(new Particle(p2.x, p2.y, cos(angle) * spd, sin(angle) * spd, 20 + floor(random(30)), random(0.5, 2), [r, g, b]));
+                    }
                 }
-
-                let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
-
-                let activeTremble = tremble;
-                if (voidActive && Math.random() < voidInstability * 0.5) activeTremble *= 5;
-
-                let ns = this.colorSeed + i * 0.5;
-                let ox1 = (noise(ns, this.decay * 2) - 0.5) * activeTremble * speedFactor;
-                let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
-                let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * activeTremble * speedFactor;
-                let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
-
-                let segAlpha = a;
-                if (this.refused && Math.random() < 0.15) segAlpha = 0;
-                if (voidActive && Math.random() < voidInstability * 0.3) segAlpha = max(0, segAlpha - random(100));
-
-                stroke(r, g, b, segAlpha);
-                strokeWeight(max(0.3, segThick));
-                line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
-
-                // Stutter effect
-                if (stutter && i > 2) {
-                    stroke(255, 255, 255, segAlpha * 0.3);
-                    strokeWeight(1);
-                    line(p1.x + scrollX + random(-4, 4), p1.y + scrollY + random(-4, 4),
-                         this.points[i - 2].x + scrollX + random(-4, 4), this.points[i - 2].y + scrollY + random(-4, 4));
-                }
-
-                // Particles
-                if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
-                    let angle = random(TWO_PI);
-                    let spd = 0.5 + random() * 1.5;
-                    particles.push(new Particle(p2.x, p2.y, cos(angle) * spd, sin(angle) * spd, 20 + floor(random(30)), random(0.5, 2), [r, g, b]));
+            } else {
+                // Stroke type rendering (no transformation yet)
+                switch (this.strokeType) {
+                    case 'tremble': this._renderTrembleType(n, a, col, tremble, thick, speedMod, voidColorShift, voidActive); break;
+                    case 'noise': this._renderNoiseType(n, a, col, thick, voidColorShift, voidActive); break;
+                    case 'ghost': this._renderGhostType(n, a, col, thick, voidColorShift, voidActive); break;
+                    case 'resistance': this._renderResistanceType(n, a, col, thick, tremble, speedMod, voidColorShift, voidActive); break;
+                    case 'glitchspeak': this._renderGlitchspeakType(n, a, col); break;
+                    default: this._renderDataType(n, a, col, thick, speedMod, voidColorShift, voidActive); break;
                 }
             }
 
@@ -807,17 +832,197 @@
             }
         }
 
+        // ── Stroke type rendering helpers ──
+
+        _renderDataType(n, a, col, thick, speedMod, voidColorShift, voidActive) {
+            for (let i = 0; i < n; i++) {
+                let pt = this.points[i];
+                let dSize = (thick * 0.5 + noise(i * 0.3, this.colorSeed) * thick) * (0.8 + 0.4 * (i < n - 1 ? dist(pt.x, pt.y, this.points[i + 1].x, this.points[i + 1].y) / 8 : 1));
+                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                let r = constrain(col[0] + shift, 20, 255);
+                let g = constrain(col[1] + shift, 20, 255);
+                let b = constrain(col[2] + shift, 20, 255);
+                if (voidActive) { r += random(-voidColorShift, voidColorShift); g += random(-voidColorShift, voidColorShift); b += random(-voidColorShift, voidColorShift); }
+                noStroke();
+                fill(r, g, b, a);
+                ellipse(pt.x + scrollX, pt.y + scrollY, dSize, dSize);
+                if (Math.random() < 0.04) {
+                    fill(160, 140, 200, a * 0.5);
+                    textFont('Courier New');
+                    textSize(6);
+                    textAlign(LEFT, CENTER);
+                    text(floor(pt.x) + ',' + floor(pt.y), pt.x + scrollX + 5, pt.y + scrollY);
+                }
+            }
+        }
+
+        _renderTrembleType(n, a, col, tremble, thick, speedMod, voidColorShift, voidActive) {
+            for (let i = 1; i < n; i++) {
+                let p1 = this.points[i - 1];
+                let p2 = this.points[i];
+                let segDist = dist(p1.x, p1.y, p2.x, p2.y);
+                let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
+                let angle = atan2(p2.y - p1.y, p2.x - p1.x);
+                let sineDisp = sin(frameCount * 0.08 + i * 0.5 + this.colorSeed) * tremble * speedFactor * 3;
+                let ox = cos(angle + HALF_PI) * sineDisp;
+                let oy = sin(angle + HALF_PI) * sineDisp;
+                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                let r = constrain(col[0] + shift, 20, 255);
+                let g = constrain(col[1] + shift, 20, 255);
+                let b = constrain(col[2] + shift, 20, 255);
+                if (voidActive) { r += random(-voidColorShift, voidColorShift); g += random(-voidColorShift, voidColorShift); b += random(-voidColorShift, voidColorShift); }
+                let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+                stroke(r, g, b, a);
+                strokeWeight(max(0.3, segThick));
+                line(p1.x + scrollX + ox, p1.y + scrollY + oy, p2.x + scrollX + ox, p2.y + scrollY + oy);
+                // Occasional lurch
+                if (Math.random() < 0.003) {
+                    let la = random(TWO_PI);
+                    let ld = random(8, 25);
+                    stroke(255, 200, 180, a * 0.5);
+                    line(p2.x + scrollX, p2.y + scrollY, p2.x + scrollX + cos(la) * ld, p2.y + scrollY + sin(la) * ld);
+                }
+            }
+        }
+
+        _renderNoiseType(n, a, col, thick, voidColorShift, voidActive) {
+            for (let i = 0; i < n; i++) {
+                let pt = this.points[i];
+                let clusterSize = 3 + floor(noise(i * 0.2, this.colorSeed) * 6);
+                let speedFactor = 1;
+                if (i > 0) {
+                    let d = dist(pt.x, pt.y, this.points[i - 1].x, this.points[i - 1].y);
+                    speedFactor = constrain(d / 10, 0.3, 2.5);
+                }
+                clusterSize = max(2, floor(clusterSize * speedFactor));
+                for (let j = 0; j < clusterSize; j++) {
+                    let ox = (noise(i * 0.3 + j * 2, this.colorSeed) - 0.5) * thick * speedFactor * 3;
+                    let oy = (noise(i * 0.3 + j * 2 + 50, this.colorSeed) - 0.5) * thick * speedFactor * 3;
+                    let shift = noise(i * 0.15 + j, this.colorSeed) * 50 - 25;
+                    let r = constrain(col[0] + shift, 20, 255);
+                    let g = constrain(col[1] + shift, 20, 255);
+                    let b = constrain(col[2] + shift, 20, 255);
+                    let dotA = a * (0.3 + noise(i + j, this.colorSeed + 200) * 0.7);
+                    let broken = Math.random() < 0.15;
+                    if (broken) { r = constrain(r + 80, 20, 255); dotA *= 0.4; }
+                    if (voidActive) { r += random(-voidColorShift, voidColorShift); g += random(-voidColorShift, voidColorShift); b += random(-voidColorShift, voidColorShift); }
+                    noStroke();
+                    fill(r, g, b, dotA);
+                    ellipse(pt.x + scrollX + ox, pt.y + scrollY + oy, random(0.8, 2.5), random(0.8, 2.5));
+                }
+            }
+        }
+
+        _renderGhostType(n, a, col, thick, voidColorShift, voidActive) {
+            let lagX = 0, lagY = 0;
+            for (let i = 0; i < n; i++) {
+                let pt = this.points[i];
+                lagX += (pt.x - lagX) * 0.15;
+                lagY += (pt.y - lagY) * 0.15;
+                let ghostA = a * (0.2 + noise(i * 0.3, frameCount * 0.01 + this.colorSeed) * 0.6);
+                let flicker = Math.random() < 0.12 ? 0 : 1;
+                if (flicker === 0) continue;
+                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                let r = constrain(col[0] + shift, 20, 255);
+                let g = constrain(col[1] + shift, 20, 255);
+                let b = constrain(col[2] + shift, 20, 255);
+                if (voidActive) { r += random(-voidColorShift, voidColorShift); g += random(-voidColorShift, voidColorShift); b += random(-voidColorShift, voidColorShift); }
+                let segThick = thick * 0.6 * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+                noStroke();
+                fill(r, g, b, ghostA * flicker);
+                ellipse(lagX + scrollX, lagY + scrollY, segThick, segThick);
+                // Occasional full fade gap
+                if (Math.random() < 0.08) i += 1 + floor(random(2));
+            }
+        }
+
+        _renderResistanceType(n, a, col, thick, tremble, speedMod, voidColorShift, voidActive) {
+            for (let i = 1; i < n; i++) {
+                let p1 = this.points[i - 1];
+                let p2 = this.points[i];
+                let segDist = dist(p1.x, p1.y, p2.x, p2.y);
+                let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
+                let dx = p2.x - p1.x, dy = p2.y - p1.y;
+                // Grid repulsion
+                for (let gl of gridLines) {
+                    if (!gl.active || gl.scarLevel < 0.2) continue;
+                    let d = abs(gl.isHorizontal ? p2.y - gl.pos : p2.x - gl.pos);
+                    if (d < 80) {
+                        let force = (1 - d / 80) * gl.scarLevel * 3;
+                        let ang = gl.isHorizontal ? (Math.random() < 0.5 ? -HALF_PI : HALF_PI) : (Math.random() < 0.5 ? 0 : PI);
+                        dx += cos(ang) * force;
+                        dy += sin(ang) * force;
+                    }
+                }
+                let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
+                let r = constrain(col[0] + shift, 20, 255);
+                let g = constrain(col[1] + shift, 20, 255);
+                let b = constrain(col[2] + shift, 20, 255);
+                if (voidActive) { r += random(-voidColorShift, voidColorShift); g += random(-voidColorShift, voidColorShift); b += random(-voidColorShift, voidColorShift); }
+                let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+                let activeTremble = tremble * 0.5 + glitchspeak.length * 0.05;
+                let ox = (noise(i * 0.3, this.colorSeed + 50) - 0.5) * activeTremble * speedFactor;
+                let oy = (noise(i * 0.3, this.colorSeed + 100) - 0.5) * activeTremble * speedFactor;
+                stroke(r, g, b, a);
+                strokeWeight(max(0.3, segThick));
+                line(p1.x + scrollX + ox, p1.y + scrollY + oy, p1.x + scrollX + dx + ox, p1.y + scrollY + dy + oy);
+                if (Math.random() < 0.05) {
+                    noStroke();
+                    fill(200, 120, 80, a * 0.3);
+                    ellipse(p2.x + scrollX + random(-6, 6), p2.y + scrollY + random(-6, 6), 4, 4);
+                }
+            }
+        }
+
+        _renderGlitchspeakType(n, a, col) {
+            let word = this.glitchspeakWord || 'gl1tch';
+            if (n < 2) return;
+            let step = max(1, floor(n / word.length));
+            for (let i = 0; i < word.length && i * step < n; i++) {
+                let idx = i * step;
+                let pt = this.points[idx];
+                let char = word[i];
+                let angle = 0;
+                if (idx + 1 < n) {
+                    angle = atan2(this.points[idx + 1].y - pt.y, this.points[idx + 1].x - pt.x);
+                }
+                push();
+                translate(pt.x + scrollX, pt.y + scrollY);
+                rotate(angle);
+                let shift = noise(i * 0.3, this.colorSeed) * 40 - 20;
+                let r = constrain(col[0] + shift + random(-20, 20), 20, 255);
+                let g = constrain(col[1] + shift + random(-20, 20), 20, 255);
+                let b = constrain(col[2] + shift + random(-20, 20), 20, 255);
+                fill(r, g, b, a);
+                noStroke();
+                textFont('Courier New');
+                textSize(8 + noise(i * 0.2, this.colorSeed) * 4);
+                textAlign(CENTER, CENTER);
+                let corrupt = Math.random() < 0.2;
+                text(corrupt ? corruptText(char, 0.8) : char, random(-2, 2), random(-2, 2));
+                pop();
+                if (Math.random() < 0.1) {
+                    noStroke();
+                    fill(180, 160, 200, a * 0.3);
+                    textFont('Courier New');
+                    textSize(5);
+                    textAlign(CENTER, CENTER);
+                    text(corruptText(word, 0.6), pt.x + scrollX + random(-10, 10), pt.y + scrollY + random(6, 12));
+                }
+            }
+        }
         serialize() {
             return {
                 id: this.id, userId: this.userId, params: this.params,
                 points: this.points, timestamp: this.timestamp,
                 transformation: this.transformation, refused: this.refused,
-                artifacts: this.artifacts, decayMultiplier: this.decayMultiplier
+                artifacts: this.artifacts, decayMultiplier: this.decayMultiplier,
+                strokeType: this.strokeType, glitchspeakWord: this.glitchspeakWord
             };
         }
 
         static deserialize(d) {
-            let s = new Stroke(d.userId, d.params);
+            let s = new Stroke(d.userId, d.params, d.strokeType || 'data');
             s.id = d.id;
             s.points = d.points;
             s.timestamp = d.timestamp;
@@ -826,6 +1031,8 @@
             s.artifacts = d.artifacts || [];
             s.revealTimer = 0;
             s.decayMultiplier = d.decayMultiplier || 1;
+            s.strokeType = d.strokeType || 'data';
+            s.glitchspeakWord = d.glitchspeakWord || null;
             return s;
         }
     }
@@ -1260,7 +1467,7 @@
         if (currentMode === MODES.GLITCH && energy > 0 && frameCounter % 3 === 0) {
             let gx = mouseX - scrollX + random(-40, 40), gy = mouseY - scrollY + random(-40, 40);
             if (!currentStroke) {
-                currentStroke = new Stroke(me.id, me);
+                currentStroke = new Stroke(me.id, me, currentStrokeType);
                 if (strokes.length >= CFG.maxStrokes) strokes.shift();
                 strokes.push(currentStroke);
                 currentStroke.addPoint(gx, gy);
@@ -1277,7 +1484,7 @@
                 let s = currentStroke;
                 applyTransformation(s);
                 broadcastStroke(s);
-                currentStroke = new Stroke(me.id, me);
+                currentStroke = new Stroke(me.id, me, currentStrokeType);
                 if (strokes.length >= CFG.maxStrokes) strokes.shift();
                 strokes.push(currentStroke);
                 currentStroke.addPoint(mouseX - scrollX, mouseY - scrollY);
@@ -1345,7 +1552,7 @@
             shockwaves.push(new Shockwave(gx, gy));
             for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
             isDrawing = true;
-            currentStroke = new Stroke(me.id, me);
+            currentStroke = new Stroke(me.id, me, currentStrokeType);
             if (strokes.length >= CFG.maxStrokes) strokes.shift();
             strokes.push(currentStroke);
             currentStroke.addPoint(gx, gy);
@@ -1467,7 +1674,7 @@
             }
             if (nearest && nearDist < 200 && energy > 0) {
                 if (!currentStroke) {
-                    currentStroke = new Stroke(me.id, me);
+                    currentStroke = new Stroke(me.id, me, currentStrokeType);
                     if (strokes.length >= CFG.maxStrokes) strokes.shift();
                     strokes.push(currentStroke);
                 }
@@ -1729,6 +1936,20 @@
         if (key === 'g') { currentMode = MODES.GLITCH; updateModeDisplay(); return false; }
         if (key === 'e') { currentMode = MODES.ECHO; updateModeDisplay(); return false; }
         if (key === 'x') { currentMode = MODES.ERASE; updateModeDisplay(); return false; }
+
+        // Stroke type switching
+        if (key === '1') { currentStrokeType = STROKE_TYPES.DATA; updateModeDisplay(); return false; }
+        if (key === '2') { currentStrokeType = STROKE_TYPES.TREMBLE; updateModeDisplay(); return false; }
+        if (key === '3') { currentStrokeType = STROKE_TYPES.NOISE; updateModeDisplay(); return false; }
+        if (key === '4') { currentStrokeType = STROKE_TYPES.GHOST; updateModeDisplay(); return false; }
+        if (key === '5') { currentStrokeType = STROKE_TYPES.RESISTANCE; updateModeDisplay(); return false; }
+        if (key === '6') { currentStrokeType = STROKE_TYPES.GLITCHSPEAK; updateModeDisplay(); return false; }
+        if (keyCode === TAB) {
+            let idx = STROKE_TYPE_ORDER.indexOf(currentStrokeType);
+            currentStrokeType = STROKE_TYPE_ORDER[(idx + 1) % STROKE_TYPE_ORDER.length];
+            updateModeDisplay();
+            return false;
+        }
 
         // Shift operations
         if (key === 'R') {
