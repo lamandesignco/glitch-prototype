@@ -120,6 +120,15 @@
                             users[uid].lastSeen = Date.now();
                         }
                     }
+                    if (d.strokes) {
+                        for (let raw of d.strokes) {
+                            let s = Stroke.deserialize(raw);
+                            if (s && !strokes.find(st => st.id === s.id)) {
+                                strokes.push(s);
+                            }
+                        }
+                        if (strokes.length > CFG.maxStrokes) strokes.splice(0, strokes.length - CFG.maxStrokes);
+                    }
                     updateUserCount();
                 } else if (d.type === 'stroke') {
                     let s = Stroke.deserialize(d.data);

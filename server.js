@@ -11,6 +11,8 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 let users = {};  // id → { params, ws }
+let serverStrokes = [];
+const MAX_SERVER_STROKES = 500;
 
 function broadcast(data, excludeWs) {
   const msg = JSON.stringify(data);
@@ -37,12 +39,14 @@ wss.on('connection', (ws) => {
         for (let uid in users) {
           if (uid !== msg.id) existing[uid] = users[uid].params;
         }
-        ws.send(JSON.stringify({ type: 'welcome', users: existing }));
+        ws.send(JSON.stringify({ type: 'welcome', users: existing, strokes: serverStrokes.slice(-200) }));
         // Broadcast join to others
         broadcast({ type: 'user-join', id: msg.id, params: msg.params }, ws);
         break;
 
       case 'stroke':
+        serverStrokes.push(msg.data);
+        if (serverStrokes.length > MAX_SERVER_STROKES) serverStrokes.splice(0, serverStrokes.length - MAX_SERVER_STROKES);
         broadcast({ type: 'stroke', data: msg.data }, ws);
         break;
 
