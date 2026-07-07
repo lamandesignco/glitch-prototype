@@ -53,6 +53,27 @@
         bg: [10, 8, 15]
     };
 
+    // ─── Camera / World ─────────────────────────────────────────────
+    const WORLD_SIZE = 2000;
+    const CAMERA_SPEED = 5;
+
+    let camera = { x: 0, y: 0 };
+
+    function s2w(sx, sy) {
+        return { x: sx - width / 2 + camera.x, y: sy - height / 2 + camera.y };
+    }
+
+    function w2s(wx, wy) {
+        return { x: wx + width / 2 - camera.x, y: wy + height / 2 - camera.y };
+    }
+
+    function constrainCamera() {
+        camera.x = constrain(camera.x, -WORLD_SIZE + width / 2, WORLD_SIZE - width / 2);
+        camera.y = constrain(camera.y, -WORLD_SIZE + height / 2, WORLD_SIZE - height / 2);
+        if (width > WORLD_SIZE * 2) camera.x = 0;
+        if (height > WORLD_SIZE * 2) camera.y = 0;
+    }
+
     // ─── User Parameters (unique per session) ────────────────────────
     function generateUser() {
         let id = 'u' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
@@ -284,7 +305,7 @@
         get alpha() { return map(this.life, 0, this.maxLife, 0, 180); }
     }
 
-    // ─── GridLine (screen-space, fluid) ──────────────────────────────
+    // ─── GridLine (world-space, fluid) ──────────────────────────────
     class GridLine {
         constructor(pos, isHorizontal) {
             this.pos = pos;
@@ -326,6 +347,7 @@
         }
         display() {
             if (!this.active) return;
+
             let alpha = map(this.distortion, 0, 1, 50, 8) * (1 - this.decay * 0.8);
             alpha = Math.max(alpha, 0);
             if (alpha < 2) return;
@@ -334,21 +356,33 @@
             strokeWeight(map(this.distortion, 0, 1, 0.3, 2.5));
             noFill();
 
-            let len = this.isHorizontal ? width : height;
-            let segs = max(6, floor(len / 35));
-            let sl = len / segs;
-
-            beginShape();
-            for (let i = 0; i <= segs; i++) {
-                let t = i / segs;
-                let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
-                if (this.isHorizontal) {
-                    vertex(i * sl, this.pos + this.offset + nOff);
-                } else {
-                    vertex(this.pos + this.offset + nOff, i * sl);
+            if (this.isHorizontal) {
+                if (this.pos < camera.y - height / 2 - 10 || this.pos > camera.y + height / 2 + 10) return;
+                let wLeft = camera.x - width / 2;
+                let wRight = camera.x + width / 2;
+                let segs = max(6, floor(width / 35));
+                let sl = (wRight - wLeft) / segs;
+                beginShape();
+                for (let i = 0; i <= segs; i++) {
+                    let wx = wLeft + i * sl;
+                    let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
+                    vertex(wx, this.pos + this.offset + nOff);
                 }
+                endShape();
+            } else {
+                if (this.pos < camera.x - width / 2 - 10 || this.pos > camera.x + width / 2 + 10) return;
+                let wTop = camera.y - height / 2;
+                let wBottom = camera.y + height / 2;
+                let segs = max(6, floor(height / 35));
+                let sl = (wBottom - wTop) / segs;
+                beginShape();
+                for (let i = 0; i <= segs; i++) {
+                    let wy = wTop + i * sl;
+                    let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
+                    vertex(this.pos + this.offset + nOff, wy);
+                }
+                endShape();
             }
-            endShape();
         }
     }
 
@@ -551,14 +585,10 @@
     // ─── Helpers ─────────────────────────────────────────────────────
     function initGrid() {
         gridLines = [];
-        let cols = floor(width / CFG.cellSize);
-        let rows = floor(height / CFG.cellSize);
-        for (let i = 0; i <= cols; i++) {
-            let x = i * CFG.cellSize;
+        for (let x = -WORLD_SIZE; x <= WORLD_SIZE; x += CFG.cellSize) {
             gridLines.push(new GridLine(x, false));
         }
-        for (let i = 0; i <= rows; i++) {
-            let y = i * CFG.cellSize;
+        for (let y = -WORLD_SIZE; y <= WORLD_SIZE; y += CFG.cellSize) {
             gridLines.push(new GridLine(y, true));
         }
     }
@@ -571,7 +601,7 @@
     function spawnInitialNoise() {
         let words = ['dr1ft', 'v01d', 'gr1d', 'tr4c3', 'n0153', 'gh0st', 'd3c4y', 'p4l1mp53st'];
         for (let i = 0; i < 4; i++) {
-            createNoiseText(random(width), random(height), words[i], 'generated');
+            createNoiseText(random(-WORLD_SIZE, WORLD_SIZE), random(-WORLD_SIZE, WORLD_SIZE), words[i], 'generated');
         }
     }
 
@@ -610,9 +640,10 @@
         let glitchWord = generateGlitchspeak(firstWord);
         broadcastGlitchspeak(glitchWord);
 
+        let w = s2w(mouseX, mouseY);
         for (let i = 0; i < 6; i++) {
             let t = new NoiseText(
-                mouseX + random(-250, 250), mouseY + random(-250, 250),
+                w.x + random(-250, 250), w.y + random(-250, 250),
                 i === 0 ? '\u2726 ' + glitchWord + ' \u2726' : generateGlitchspeak(corrupted.split(/\s+/)[i % 3] || 'v01d'),
                 'voice'
             );
@@ -620,7 +651,7 @@
             noiseTexts.push(t);
         }
 
-        let sw = new Shockwave(mouseX + random(-100, 100), mouseY + random(-100, 100));
+        let sw = new Shockwave(w.x + random(-100, 100), w.y + random(-100, 100));
         sw.maxRadius = 400; sw.life = 55; sw.maxLife = 55;
         shockwaves.push(sw);
     }
@@ -672,7 +703,7 @@
 
         // Periodic noise
         if (frameCounter % 180 === 0 && noiseTexts.length < CFG.maxNoiseTexts - 2) {
-            createNoiseText(random(width), random(height), generateGlitchspeak(), 'generated');
+            createNoiseText(random(-WORLD_SIZE, WORLD_SIZE), random(-WORLD_SIZE, WORLD_SIZE), generateGlitchspeak(), 'generated');
         }
 
         // Archive
@@ -685,7 +716,9 @@
             try { localStorage.setItem('glitchDriftState', JSON.stringify({ glitchspeak: glitchspeak.slice(-50) })); } catch (e) {}
         }
 
-        // Render
+        // Render — world space
+        push();
+        translate(width / 2 - camera.x, height / 2 - camera.y);
         for (let gl of gridLines) gl.display();
         for (let al of archive) al.display();
         for (let s of strokes) s.display();
@@ -698,6 +731,7 @@
             fill(p.color[0], p.color[1], p.color[2], pa);
             ellipse(p.x, p.y, p.size, p.size);
         }
+        pop();
     }
 
     // ─── Resize ──────────────────────────────────────────────────────
@@ -709,26 +743,28 @@
     // ─── Mouse (drawing only on click-drag) ──────────────────────────
     function mousePressed() {
         if (!voiceReady) startVoice();
+        let w = s2w(mouseX, mouseY);
 
         // Click: shockwave + grid disturbance
-        shockwaves.push(new Shockwave(mouseX, mouseY));
-        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.6);
+        shockwaves.push(new Shockwave(w.x, w.y));
+        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.6);
 
         // Start drawing stroke
         isDrawing = true;
         currentStroke = new Stroke(me.id, me);
         if (strokes.length >= CFG.maxStrokes) strokes.shift();
         strokes.push(currentStroke);
-        currentStroke.addPoint(mouseX, mouseY);
+        currentStroke.addPoint(w.x, w.y);
     }
 
     function mouseDragged() {
         if (!currentStroke) return;
+        let w = s2w(mouseX, mouseY);
         let last = currentStroke.points[currentStroke.points.length - 1];
-        if (!last || dist(mouseX, mouseY, last.x, last.y) > 4) {
-            currentStroke.addPoint(mouseX, mouseY);
+        if (!last || dist(w.x, w.y, last.x, last.y) > 4) {
+            currentStroke.addPoint(w.x, w.y);
         }
-        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.4);
+        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.4);
     }
 
     function mouseReleased() {
@@ -745,7 +781,8 @@
 
     // No hover traces—only grid disturbance
     function mouseMoved() {
-        for (let gl of gridLines) gl.applyDisturbance(mouseX, mouseY, 0.05);
+        let w = s2w(mouseX, mouseY);
+        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.05);
     }
 
     // ─── Keyboard ────────────────────────────────────────────────────
@@ -761,9 +798,17 @@
             return;
         }
 
+        // Navigation — skip glitchspeak for these
+        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { camera.x -= CAMERA_SPEED; constrainCamera(); return false; }
+        if (keyCode === RIGHT_ARROW || key === 'd' || key === 'D') { camera.x += CAMERA_SPEED; constrainCamera(); return false; }
+        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { camera.y -= CAMERA_SPEED; constrainCamera(); return false; }
+        if (keyCode === DOWN_ARROW) { camera.y += CAMERA_SPEED; constrainCamera(); return false; }
+
+        // Glitchspeak for non-navigation keys
+        let w = s2w(mouseX, mouseY);
         let glitchWord = generateGlitchspeak(key);
         broadcastGlitchspeak(glitchWord);
-        createNoiseText(mouseX + random(-20, 20), mouseY + random(-20, 20), glitchWord, 'keyboard');
+        createNoiseText(w.x + random(-20, 20), w.y + random(-20, 20), glitchWord, 'keyboard');
     }
 
     // ─── State ───────────────────────────────────────────────────────
