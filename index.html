@@ -53,26 +53,12 @@
         bg: [10, 8, 15]
     };
 
-    // ─── Camera / World ─────────────────────────────────────────────
-    const WORLD_SIZE = 2000;
-    const CAMERA_SPEED = 5;
+    // ─── Grid Scroll ────────────────────────────────────────────────
+    const SCROLL_SPEED = 10;
+    const GRID_EXTENT = 2000;
 
-    let camera = { x: random(-WORLD_SIZE, WORLD_SIZE), y: random(-WORLD_SIZE, WORLD_SIZE) };
-
-    function s2w(sx, sy) {
-        return { x: sx - width / 2 + camera.x, y: sy - height / 2 + camera.y };
-    }
-
-    function w2s(wx, wy) {
-        return { x: wx + width / 2 - camera.x, y: wy + height / 2 - camera.y };
-    }
-
-    function constrainCamera() {
-        camera.x = constrain(camera.x, -WORLD_SIZE + width / 2, WORLD_SIZE - width / 2);
-        camera.y = constrain(camera.y, -WORLD_SIZE + height / 2, WORLD_SIZE - height / 2);
-        if (width > WORLD_SIZE * 2) camera.x = 0;
-        if (height > WORLD_SIZE * 2) camera.y = 0;
-    }
+    let scrollX = (Math.random() - 0.5) * GRID_EXTENT * 2;
+    let scrollY = (Math.random() - 0.5) * GRID_EXTENT * 2;
 
     // ─── User Parameters (unique per session) ────────────────────────
     function generateUser() {
@@ -348,6 +334,17 @@
         display() {
             if (!this.active) return;
 
+            let screenPos, span;
+            if (this.isHorizontal) {
+                screenPos = this.pos + scrollY;
+                if (screenPos < -10 || screenPos > height + 10) return;
+                span = width;
+            } else {
+                screenPos = this.pos + scrollX;
+                if (screenPos < -10 || screenPos > width + 10) return;
+                span = height;
+            }
+
             let alpha = map(this.distortion, 0, 1, 50, 8) * (1 - this.decay * 0.8);
             alpha = Math.max(alpha, 0);
             if (alpha < 2) return;
@@ -356,33 +353,19 @@
             strokeWeight(map(this.distortion, 0, 1, 0.3, 2.5));
             noFill();
 
-            if (this.isHorizontal) {
-                if (this.pos < camera.y - height / 2 - 10 || this.pos > camera.y + height / 2 + 10) return;
-                let wLeft = camera.x - width / 2;
-                let wRight = camera.x + width / 2;
-                let segs = max(6, floor(width / 35));
-                let sl = (wRight - wLeft) / segs;
-                beginShape();
-                for (let i = 0; i <= segs; i++) {
-                    let wx = wLeft + i * sl;
-                    let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
-                    vertex(wx, this.pos + this.offset + nOff);
+            let segs = max(6, floor(span / 35));
+            let sl = span / segs;
+
+            beginShape();
+            for (let i = 0; i <= segs; i++) {
+                let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
+                if (this.isHorizontal) {
+                    vertex(i * sl, screenPos + this.offset + nOff);
+                } else {
+                    vertex(screenPos + this.offset + nOff, i * sl);
                 }
-                endShape();
-            } else {
-                if (this.pos < camera.x - width / 2 - 10 || this.pos > camera.x + width / 2 + 10) return;
-                let wTop = camera.y - height / 2;
-                let wBottom = camera.y + height / 2;
-                let segs = max(6, floor(height / 35));
-                let sl = (wBottom - wTop) / segs;
-                beginShape();
-                for (let i = 0; i <= segs; i++) {
-                    let wy = wTop + i * sl;
-                    let nOff = noise(i * 0.2, this.phase) * this.distortion * 12;
-                    vertex(this.pos + this.offset + nOff, wy);
-                }
-                endShape();
             }
+            endShape();
         }
     }
 
@@ -551,7 +534,7 @@
             noFill();
             stroke(BASE.grid[0], BASE.grid[1], BASE.grid[2], a);
             strokeWeight(0.5);
-            ellipse(this.x, this.y, this.radius * 2);
+            ellipse(this.x + scrollX, this.y + scrollY, this.radius * 2);
         }
     }
 
@@ -585,10 +568,10 @@
     // ─── Helpers ─────────────────────────────────────────────────────
     function initGrid() {
         gridLines = [];
-        for (let x = -WORLD_SIZE; x <= WORLD_SIZE; x += CFG.cellSize) {
+        for (let x = -GRID_EXTENT; x <= GRID_EXTENT; x += CFG.cellSize) {
             gridLines.push(new GridLine(x, false));
         }
-        for (let y = -WORLD_SIZE; y <= WORLD_SIZE; y += CFG.cellSize) {
+        for (let y = -GRID_EXTENT; y <= GRID_EXTENT; y += CFG.cellSize) {
             gridLines.push(new GridLine(y, true));
         }
     }
@@ -601,7 +584,7 @@
     function spawnInitialNoise() {
         let words = ['dr1ft', 'v01d', 'gr1d', 'tr4c3', 'n0153', 'gh0st', 'd3c4y', 'p4l1mp53st'];
         for (let i = 0; i < 4; i++) {
-            createNoiseText(random(-WORLD_SIZE, WORLD_SIZE), random(-WORLD_SIZE, WORLD_SIZE), words[i], 'generated');
+            createNoiseText(random(width), random(height), words[i], 'generated');
         }
     }
 
@@ -640,10 +623,9 @@
         let glitchWord = generateGlitchspeak(firstWord);
         broadcastGlitchspeak(glitchWord);
 
-        let w = s2w(mouseX, mouseY);
         for (let i = 0; i < 6; i++) {
             let t = new NoiseText(
-                w.x + random(-250, 250), w.y + random(-250, 250),
+                mouseX + random(-250, 250), mouseY + random(-250, 250),
                 i === 0 ? '\u2726 ' + glitchWord + ' \u2726' : generateGlitchspeak(corrupted.split(/\s+/)[i % 3] || 'v01d'),
                 'voice'
             );
@@ -651,7 +633,7 @@
             noiseTexts.push(t);
         }
 
-        let sw = new Shockwave(w.x + random(-100, 100), w.y + random(-100, 100));
+        let sw = new Shockwave(mouseX - scrollX + random(-100, 100), mouseY - scrollY + random(-100, 100));
         sw.maxRadius = 400; sw.life = 55; sw.maxLife = 55;
         shockwaves.push(sw);
     }
@@ -703,7 +685,7 @@
 
         // Periodic noise
         if (frameCounter % 180 === 0 && noiseTexts.length < CFG.maxNoiseTexts - 2) {
-            createNoiseText(random(-WORLD_SIZE, WORLD_SIZE), random(-WORLD_SIZE, WORLD_SIZE), generateGlitchspeak(), 'generated');
+            createNoiseText(random(width), random(height), generateGlitchspeak(), 'generated');
         }
 
         // Archive
@@ -716,9 +698,7 @@
             try { localStorage.setItem('glitchDriftState', JSON.stringify({ glitchspeak: glitchspeak.slice(-50) })); } catch (e) {}
         }
 
-        // Render — world space
-        push();
-        translate(width / 2 - camera.x, height / 2 - camera.y);
+        // Render
         for (let gl of gridLines) gl.display();
         for (let al of archive) al.display();
         for (let s of strokes) s.display();
@@ -731,7 +711,6 @@
             fill(p.color[0], p.color[1], p.color[2], pa);
             ellipse(p.x, p.y, p.size, p.size);
         }
-        pop();
     }
 
     // ─── Resize ──────────────────────────────────────────────────────
@@ -743,28 +722,28 @@
     // ─── Mouse (drawing only on click-drag) ──────────────────────────
     function mousePressed() {
         if (!voiceReady) startVoice();
-        let w = s2w(mouseX, mouseY);
 
-        // Click: shockwave + grid disturbance
-        shockwaves.push(new Shockwave(w.x, w.y));
-        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.6);
+        // Click: shockwave + grid disturbance (convert screen to grid coords)
+        let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        shockwaves.push(new Shockwave(gx, gy));
+        for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
 
         // Start drawing stroke
         isDrawing = true;
         currentStroke = new Stroke(me.id, me);
         if (strokes.length >= CFG.maxStrokes) strokes.shift();
         strokes.push(currentStroke);
-        currentStroke.addPoint(w.x, w.y);
+        currentStroke.addPoint(mouseX, mouseY);
     }
 
     function mouseDragged() {
         if (!currentStroke) return;
-        let w = s2w(mouseX, mouseY);
         let last = currentStroke.points[currentStroke.points.length - 1];
-        if (!last || dist(w.x, w.y, last.x, last.y) > 4) {
-            currentStroke.addPoint(w.x, w.y);
+        if (!last || dist(mouseX, mouseY, last.x, last.y) > 4) {
+            currentStroke.addPoint(mouseX, mouseY);
         }
-        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.4);
+        let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
     }
 
     function mouseReleased() {
@@ -781,8 +760,8 @@
 
     // No hover traces—only grid disturbance
     function mouseMoved() {
-        let w = s2w(mouseX, mouseY);
-        for (let gl of gridLines) gl.applyDisturbance(w.x, w.y, 0.05);
+        let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.05);
     }
 
     // ─── Keyboard ────────────────────────────────────────────────────
@@ -799,16 +778,15 @@
         }
 
         // Navigation — skip glitchspeak for these
-        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { camera.x -= CAMERA_SPEED; constrainCamera(); return false; }
-        if (keyCode === RIGHT_ARROW || key === 'd' || key === 'D') { camera.x += CAMERA_SPEED; constrainCamera(); return false; }
-        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { camera.y -= CAMERA_SPEED; constrainCamera(); return false; }
-        if (keyCode === DOWN_ARROW) { camera.y += CAMERA_SPEED; constrainCamera(); return false; }
+        if (keyCode === LEFT_ARROW || key === 'a' || key === 'A') { scrollX = max(scrollX - SCROLL_SPEED, -GRID_EXTENT); return false; }
+        if (keyCode === RIGHT_ARROW || key === 'd' || key === 'D') { scrollX = min(scrollX + SCROLL_SPEED, GRID_EXTENT); return false; }
+        if (keyCode === UP_ARROW || key === 'w' || key === 'W') { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); return false; }
+        if (keyCode === DOWN_ARROW) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); return false; }
 
         // Glitchspeak for non-navigation keys
-        let w = s2w(mouseX, mouseY);
         let glitchWord = generateGlitchspeak(key);
         broadcastGlitchspeak(glitchWord);
-        createNoiseText(w.x + random(-20, 20), w.y + random(-20, 20), glitchWord, 'keyboard');
+        createNoiseText(mouseX + random(-20, 20), mouseY + random(-20, 20), glitchWord, 'keyboard');
     }
 
     // ─── State ───────────────────────────────────────────────────────
