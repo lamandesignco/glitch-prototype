@@ -5,14 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Glitch Drift</title>
     <style>
+        @font-face {
+            font-family: 'Defectica';
+            src: url('Defectica.otf') format('opentype');
+            font-weight: normal;
+            font-style: normal;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0a0810; overflow: hidden; font-family: 'Courier New', monospace; }
+        body { background: #0a0810; overflow: hidden; font-family: 'Defectica', 'Courier New', monospace; }
         canvas { display: block; cursor: crosshair; }
     </style>
 </head>
 <body>
-    <div id="rift-notification" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);font-family:'Courier New',monospace;font-size:9px;letter-spacing:1px;color:rgba(200,180,220,0.7);pointer-events:none;z-index:50;opacity:0;transition:opacity 0.5s;text-align:center"></div>
-    <div id="energy-label" style="position:fixed;bottom:56px;left:20px;color:rgba(200,180,220,0.25);font-size:8px;pointer-events:none;font-family:'Courier New',monospace">gl1tch 3n3rgy</div>
+    <div id="rift-notification" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);font-family:'Defectica',monospace;font-size:9px;letter-spacing:1px;color:rgba(200,180,220,0.7);pointer-events:none;z-index:50;opacity:0;transition:opacity 0.5s;text-align:center"></div>
+    <div id="energy-label" style="position:fixed;bottom:56px;left:20px;color:rgba(200,180,220,0.25);font-size:8px;pointer-events:none;font-family:'Defectica',monospace">gl1tch 3n3rgy</div>
     <div id="energy-bar" style="position:fixed;bottom:50px;left:20px;width:120px;height:4px;background:rgba(200,180,220,0.1);border:1px solid rgba(200,180,220,0.15);pointer-events:none"><div id="energy-fill" style="height:100%;width:100%;background:rgba(200,180,220,0.4)"></div></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
@@ -305,24 +311,42 @@
                 } else if (d.type === 'decay') {
                     for (let id of d.expiredStrokeIds) {
                         let s = strokes.find(st => st.id === id);
-                        if (s && ghosts.length < 200) {
-                            ghosts.push(new Ghost(s));
-                        }
-                        if (currentStroke && currentStroke.id === id) currentStroke = null;
                         if (s && s.points.length > 0) {
+                            // Convert stroke points into permanent anchor particles
+                            let col = s.params ? (s.params.color || [200, 180, 220]) : [200, 180, 220];
+                            let step = max(1, floor(s.points.length / 30));
+                            for (let i = 0; i < s.points.length; i += step) {
+                                let pt = s.points[i];
+                                remnants.push({
+                                    id: s.id + '_anchor_' + i,
+                                    x: pt.x, y: pt.y,
+                                    type: 'memory',
+                                    color: [col[0], col[1], col[2]],
+                                    size: 4,
+                                    originalStrokeId: s.id,
+                                    connectedTo: [],
+                                    creationTime: Date.now(),
+                                    pulsing: false, pulseTime: 0, active: true,
+                                    isAnchor: true
+                                });
+                            }
+                            // Particle burst from center
                             let cx = 0, cy = 0;
                             for (let pt of s.points) { cx += pt.x; cy += pt.y; }
                             cx /= s.points.length; cy /= s.points.length;
-                            let col = s.params ? s.params.color : [120, 80, 200];
+                            let burstCol = s.params ? s.params.color : [120, 80, 200];
                             for (let i = 0; i < 5 + floor(random(6)); i++) {
                                 particles.push(new Particle(
                                     cx + random(-5, 5), cy + random(-5, 5),
                                     random(-2, 2), random(-2, 2),
                                     20 + floor(random(21)), random(2, 4),
-                                    col
+                                    burstCol
                                 ));
                             }
+                            // Create ghost
+                            if (ghosts.length < 200) ghosts.push(new Ghost(s));
                         }
+                        if (currentStroke && currentStroke.id === id) currentStroke = null;
                     }
                     strokes = strokes.filter(st => !d.expiredStrokeIds.includes(st.id));
                     for (let p of d.particles) {
@@ -583,7 +607,7 @@
                 }
                 fill(200, 180, 220, this.communicateAlpha);
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(8);
                 textAlign(CENTER, CENTER);
                 text(this.communicateWord, tx, ty);
@@ -715,7 +739,7 @@
                         if (mid) {
                             fill(180, 160, 200, random(40, 100 * voiceBoost));
                             noStroke();
-                            textFont('Courier New');
+                            textFont('Defectica');
                             textSize(7);
                             textAlign(CENTER, CENTER);
                             text(getSystemReveal(), mid.x + scrollX + random(-20, 20), mid.y + scrollY + random(-20, 20));
@@ -734,7 +758,7 @@
                             ellipse(px, py, glowR, glowR);
                             // Bright prominent text
                             fill(220, 140, 255, 160 + sin(frameCount * 0.1) * 60);
-                            textFont('Courier New');
+                            textFont('Defectica');
                             textSize(16 + sin(frameCount * 0.07) * 3);
                             textAlign(CENTER, CENTER);
                             text('\u266B v01c3 4mpl1f13d', px + sin(frameCount * 0.05) * 4, py - 8 + cos(frameCount * 0.04) * 4);
@@ -792,7 +816,7 @@
                     let lateAlpha = lateVoiceBoost > 1.5 ? 120 + sin(frameCount * 0.08) * 40 : (1 - voidInstability) * 80;
                     fill(200, 180, 220, lateAlpha);
                     noStroke();
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(lateVoiceBoost > 1.5 ? 8 : 6);
                     textAlign(CENTER, CENTER);
                     text('\u2192 ' + tLabel.toUpperCase() + (lateVoiceBoost > 1.5 ? ' \u266B' : ''), mid.x + scrollX, mid.y + scrollY + 20);
@@ -873,7 +897,7 @@
                     ellipse(pt.x + scrollX, pt.y + scrollY, dSize, dSize);
                     if (this.dataTimer > 30 && Math.random() < 0.2) {
                         fill(160, 140, 200, dAlpha * 0.6);
-                        textFont('Courier New');
+                        textFont('Defectica');
                         textSize(7);
                         textAlign(LEFT, CENTER);
                         text(floor(pt.x) + ',' + floor(pt.y), pt.x + scrollX + 5, pt.y + scrollY);
@@ -1000,7 +1024,7 @@
                                 let pt = this.points[i];
                                 fill(80, 220, 255, a * 0.6);
                                 noStroke();
-                                textFont('Courier New');
+                                textFont('Defectica');
                                 textSize(6);
                                 textAlign(LEFT, CENTER);
                                 text(Math.floor(pt.x) + ',' + Math.floor(pt.y), pt.x + scrollX + 4, pt.y + scrollY);
@@ -1073,7 +1097,7 @@
                                 let word = glitchspeak.length > 0 ? glitchspeak[floor(random(glitchspeak.length))] : generateGlitchspeak();
                                 fill(200, 180, 220, a * 0.5 + sin(frameCount * 0.06 + i) * 0.3);
                                 noStroke();
-                                textFont('Courier New');
+                                textFont('Defectica');
                                 textSize(5 + sin(frameCount * 0.03 + i) * 2);
                                 textAlign(CENTER, CENTER);
                                 text(word, pt.x + scrollX + sin(frameCount * 0.05 + i * 0.3) * 5, pt.y + scrollY + cos(frameCount * 0.05 + i * 0.3) * 5);
@@ -1105,7 +1129,7 @@
                 ellipse(pt.x + scrollX, pt.y + scrollY, dSize, dSize);
                 if (Math.random() < 0.04) {
                     fill(160, 140, 200, a * 0.5);
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(6);
                     textAlign(LEFT, CENTER);
                     text(floor(pt.x) + ',' + floor(pt.y), pt.x + scrollX + 5, pt.y + scrollY);
@@ -1252,7 +1276,7 @@
                 let b = constrain(col[2] + shift + random(-20, 20), 20, 255);
                 fill(r, g, b, a);
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(8 + noise(i * 0.2, this.colorSeed) * 4);
                 textAlign(CENTER, CENTER);
                 let corrupt = Math.random() < 0.2;
@@ -1261,7 +1285,7 @@
                 if (Math.random() < 0.1) {
                     noStroke();
                     fill(180, 160, 200, a * 0.3);
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(5);
                     textAlign(CENTER, CENTER);
                     text(corruptText(word, 0.6), pt.x + scrollX + random(-10, 10), pt.y + scrollY + random(6, 12));
@@ -1339,7 +1363,7 @@
             push();
             translate(this.x, this.y);
             rotate(sin(this.phase * 0.5) * 0.02);
-            textFont('Courier New');
+            textFont('Defectica');
             textSize(11);
             textAlign(LEFT, CENTER);
             for (let i = 0; i < this.letters.length; i++) {
@@ -1413,7 +1437,7 @@
             let warnAlpha = map(energy, 0, 20, 120, 0);
             fill(200, 80, 80, warnAlpha);
             noStroke();
-            textFont('Courier New');
+            textFont('Defectica');
             textSize(9);
             textAlign(CENTER, CENTER);
             text('3n3rgy l0w', width / 2, 80);
@@ -1479,7 +1503,7 @@
                 if (mid) {
                     fill(180, 160, 220, this.wordAlpha);
                     noStroke();
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(8);
                     textAlign(CENTER, CENTER);
                     let wx = mid.x + scrollX + noise(mid.x * 0.1, this.age * 0.01) * 10 - 5;
@@ -1729,7 +1753,7 @@
         persistentBuffer = createGraphics(windowWidth, windowHeight);
         pixelDensity(1);
         colorMode(RGB);
-        textFont('Courier New');
+        textFont('Defectica');
 
         strokes = [];
         remnants = [];
@@ -1737,7 +1761,16 @@
         glitchspeak = [
             'gr1dfl0w', 'tr4c3f0ss1l', 'n0153', 'dr1ft',
             'p4l1mp53st', 'gh0st1ng', '3ncrypt10n', 'r3fus4l',
-            'v01d', 'd3c4y', 'p4rt1cl3', 'd1sturb4nc3'
+            'v01d', 'd3c4y', 'p4rt1cl3', 'd1sturb4nc3',
+            'r3fus3', 'sh4d3', 'sk!n', 'b0dy',
+            '3rr0r', 'fl3sh', 'l!v3', 'bl4ck',
+            'q33r', 'gl!tch', 'm0m3nt', 'sp3ak',
+            'ruptur3', 'fr4gm3nt', 'c0rr3pt', 'f33db4ck',
+            'c0d3', 'w0rk', '3n3rgy', 'r3s!st',
+            'c0mm0n', '3ncl0s3', 'str!k3', 'sol!d',
+            'br4nd', 's3ll', 'c0ll3ct!v3', 'r!ft',
+            'h4unt', '3ch0', 'pl4y', 'dr4w',
+            'scr!bbl3', 'st4ck', 'f0ss!l', 'r3mn4nt'
         ];
 
         initGrid();
@@ -2002,7 +2035,7 @@
         }
 
         // ─── Periodic noise ───
-        if (frameCounter % 180 === 0 && noiseTexts.length < CFG.maxNoiseTexts - 2) {
+        if (frameCounter % 60 === 0 && noiseTexts.length < CFG.maxNoiseTexts - 2) {
             createNoiseText(random(width), random(height), generateGlitchspeak(), 'generated');
         }
 
@@ -2167,7 +2200,7 @@
                 if (sx < -40 || sx > width + 40 || sy < -40 || sy > height + 40) continue;
                 noStroke();
                 fill(68, 204, 221, alpha);
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(5);
                 textAlign(gl.isHorizontal ? LEFT : CENTER, gl.isHorizontal ? CENTER : TOP);
                 let reveal = getSystemReveal();
@@ -2181,7 +2214,7 @@
                 if (fx < 0 || fx > width || fy < 0 || fy > height) continue;
                 noStroke();
                 fill(68, 204, 221, random(40, 100));
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(4);
                 textAlign(CENTER, CENTER);
                 text('(' + floor(random(0, 2000)) + ', ' + floor(random(0, 2000)) + ')', fx, fy);
@@ -2224,7 +2257,7 @@
 
         // ─── Code perk: data labels on all strokes ───
         if (riftPerks.code) {
-            textFont('Courier New');
+            textFont('Defectica');
             textSize(6);
             textAlign(LEFT, CENTER);
             noStroke();
@@ -2260,7 +2293,7 @@
                 pulseSize = dt < 500 ? sin(map(dt, 0, 500, 0, PI)) * 0.5 : 0;
                 if (dt > 500) rem.pulsing = false;
             }
-            let sz = (rem.size + pulseSize) * 3;
+            let sz = (rem.size + pulseSize) * 3 * (rem.isAnchor ? 1.2 : 1);
             // Bright glow behind every remnant
             noStroke();
             fill(rem.color[0], rem.color[1], rem.color[2], 60);
@@ -2354,7 +2387,7 @@
             if (fw.alpha < 1) continue;
             noStroke();
             fill(200, 200, 200, fw.alpha);
-            textFont('Courier New');
+            textFont('Defectica');
             textSize(fw.size);
             textAlign(CENTER, CENTER);
             text(corruptText(fw.word, 0.4), fw.x + scrollX, fw.y + scrollY);
@@ -2425,7 +2458,7 @@
             if (vm.type === '_transcript') {
                 fill(180, 140, 160, vmA);
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(6);
                 textAlign(CENTER, CENTER);
                 text(corruptText(vm.text, 0.6), sx + random(-2, 2), sy);
@@ -2490,7 +2523,7 @@
                     rotate(random(TWO_PI));
                     fill(constrain(vm.r + random(-30, 30), 20, 255), constrain(vm.g + random(-30, 30), 20, 255), constrain(vm.b + random(-30, 30), 20, 255), vmA);
                     noStroke();
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(vm.size * 0.8 + 4);
                     textAlign(CENTER, CENTER);
                     text(corruptText(ch, 0.6), random(-2, 2), random(-2, 2));
@@ -2502,7 +2535,7 @@
                     ellipse(sx, sy, vm.size * 0.8, vm.size * 0.8);
                     if (Math.random() < 0.08) {
                         fill(160, 140, 200, vmA * 0.5);
-                        textFont('Courier New');
+                        textFont('Defectica');
                         textSize(5);
                         text(floor(px) + ',' + floor(py), sx + 4, sy);
                     }
@@ -2513,7 +2546,7 @@
             let nAlpha = map(nt.life, 0, nt.maxLife, 0, 150);
             fill(200, 180, 220, nAlpha);
             noStroke();
-            textFont('Courier New');
+            textFont('Defectica');
             textSize(9);
             textAlign(CENTER, CENTER);
             text(nt.text, nt.x, nt.y + random(-1, 1));
@@ -2531,7 +2564,7 @@
                 case 'code':
                     noStroke();
                     fill(68, 204, 221, ta * 0.5);
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(5 + sin(frameCount * 0.05 + t.x) * 1);
                     text(t.data || getSystemReveal(), sx + random(-15, 15), sy + random(-15, 15));
                     break;
@@ -2565,7 +2598,7 @@
                 case 'glitchspeak':
                     noStroke();
                     fill(200, 200, 200, ta * 0.6);
-                    textFont('Courier New');
+                    textFont('Defectica');
                     textSize(6);
                     textAlign(CENTER, CENTER);
                     text(t.data || generateGlitchspeak(), sx, sy);
@@ -2648,7 +2681,7 @@
                 let ty = mouseY + random(-50, 50);
                 fill(vr, vg, vb, vAlpha * 0.4);
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(7 + vol * 4);
                 textAlign(CENTER, CENTER);
                 text(corruptText(word, 0.5), tx, ty);
@@ -2838,7 +2871,7 @@
                 let word = words[floor(random(words.length))];
                 fill(200, 80, 80, random(60, 120));
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(random(10, 20));
                 textAlign(CENTER, CENTER);
                 text(word, gx + scrollX + random(-20, 20), gy + scrollY + random(-20, 20));
@@ -2930,7 +2963,7 @@
             if (Math.random() < 0.02) {
                 fill(120, 40, 40, 80);
                 noStroke();
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(9);
                 textAlign(CENTER, CENTER);
                 text('GONE', gx + scrollX + random(-10, 10), gy + scrollY + random(-10, 10));
@@ -3204,7 +3237,7 @@
                 fill(c[0], c[1], c[2], 80 * pulse);
                 ellipse(sx, sy, baseR * 1.5, baseR * 1.5);
                 fill(c[0], c[1], c[2], 120 * pulse);
-                textFont('Courier New');
+                textFont('Defectica');
                 textSize(6 + pulse * 2);
                 textAlign(CENTER, CENTER);
                 text('{ }', sx, sy);
@@ -3282,7 +3315,7 @@
                 ellipse(sx, sy, baseR * 4, baseR * 4);
                 fill(c[0], c[1], c[2], 50 * pulse);
                 ellipse(sx, sy, baseR * 1.5, baseR * 1.5);
-                textFont('Courier New');
+                textFont('Defectica');
                 textAlign(CENTER, CENTER);
                 let chars = 'abcdefghijklmnopqrstuvwxyz';
                 for (let i = 0; i < 5; i++) {
