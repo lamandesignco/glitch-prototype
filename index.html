@@ -2653,15 +2653,15 @@
         // Create new rect if sound is loud enough
         if (vol > threshold && !rectActive) {
             if (now - lastRectTime > rectInterval) {
-                let w = constrain(map(vol, threshold, 1.0, 10, 400), 10, 400);
-                let h = constrain(map(vol, threshold, 1.0, 10, 300), 10, 300);
+                let w = constrain(map(vol, threshold, 1.0, 10, 800), 10, 800);
+                let h = constrain(map(vol, threshold, 1.0, 10, 600), 10, 600);
                 currentRect = {
                     x: mouseX - w / 2,
                     y: mouseY - h / 2,
                     w: w,
                     h: h,
                     birthTime: now,
-                    duration: random(1000, 2000)
+                    duration: 60000
                 };
                 rectActive = true;
                 rectInterval = random(1000, 3000);
