@@ -58,6 +58,7 @@
     <div id="energy-label">gl1tch 3n3rgy</div>
     <div id="energy-bar"><div id="energy-fill"></div></div>
     <div id="mode-display">\u25C9 draw</div>
+    <div id="voice-status" style="position:fixed;bottom:36px;right:20px;font-size:7px;pointer-events:none;font-family:'Courier New',monospace;color:rgba(200,180,220,0.2);letter-spacing:1px">voice: ...</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
     // ─── Configuration ───────────────────────────────────────────────
@@ -1271,9 +1272,10 @@
 
     function startVoice() {
         if (voiceReady) return;
+        let vsEl = document.getElementById('voice-status');
         startVoiceAnalysis();
         const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SR) { voiceReady = true; return; }
+        if (!SR) { voiceReady = true; if (vsEl) vsEl.textContent = 'v01c3: unsupp0rt3d'; return; }
         try {
             recognition = new SR();
             recognition.continuous = true;
@@ -1314,6 +1316,7 @@
             if (audioCtx.state === 'suspended') audioCtx.resume();
             return;
         }
+        let vsEl = document.getElementById('voice-status');
         try {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
@@ -1323,7 +1326,8 @@
                 src.connect(analyser);
                 audioDataTime = new Uint8Array(analyser.fftSize);
                 audioDataFreq = new Uint8Array(analyser.frequencyBinCount);
-            }).catch(() => {});
+                if (vsEl) { vsEl.textContent = 'v01c3: r3ady'; vsEl.style.opacity = '0.5'; }
+            }).catch(() => { if (vsEl) { vsEl.textContent = 'v01c3: n0 m1c'; vsEl.style.opacity = '0.3'; } });
         } catch (e) {}
     }
 
@@ -1364,6 +1368,7 @@
         let pitch = getPitch();
         let words = text.split(/\s+/).filter(w => w.length > 0);
         let wordCount = words.length;
+        console.log('[voice] heard:', text, 'vol:', volume.toFixed(2), 'pitch:', pitch.toFixed(0));
         let wordsPerSec = wordCount / max(1, text.length / 15);
         let density = constrain(wordsPerSec * 2, 2, 12);
         voiceActive = true;
@@ -1498,8 +1503,48 @@
             localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
         }
 
-        // ─── Continuous voice level sampling ───
+        // ─── Voice status UI ───
+        let vsEl = document.getElementById('voice-status');
+        if (vsEl) {
+            if (audioCtx && analyser) {
+                let speaking = voiceVolumeSmooth > 0.12;
+                let speechReady = voiceReady && recognition !== null;
+                if (speaking) vsEl.textContent = '\u266B v01c3';
+                else if (speechReady) vsEl.textContent = 'v01c3: r3ady';
+                else vsEl.textContent = 'v01c3: ...';
+                vsEl.style.opacity = speaking ? '1' : '0.4';
+            } else {
+                vsEl.textContent = 'v01c3: ...';
+                vsEl.style.opacity = '0.2';
+            }
+        }
+
+        // ─── Continuous voice detection + mark generation ───
         getVolume();
+        let speakingNow = voiceVolumeSmooth > 0.08;
+        if (speakingNow) {
+            voiceActive = true;
+            lastVoiceTime = frameCount;
+            // Generate voice marks from volume every ~4 frames when speaking
+            if (frameCounter % 4 === 0 && voiceMarks.length < 180) {
+                let gx = mouseX - scrollX, gy = mouseY - scrollY;
+                let vol = voiceVolumeSmooth;
+                let pitchN = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
+                let count = 1 + floor(vol * 4);
+                for (let i = 0; i < count; i++) {
+                    let mx = gx + random(-60, 60);
+                    let my = gy + random(-60, 60);
+                    let markSize = map(vol, 0, 1, 1.5, 14, true) * (0.6 + random() * 0.6);
+                    let r = constrain((1 - pitchN) * 220 + 35, 20, 255);
+                    let gn = constrain(100 + noise(i * 0.3) * 80 - vol * 40, 20, 255);
+                    let b = constrain(pitchN * 220 + 35, 20, 255);
+                    voiceMarks.push({
+                        type: currentStrokeType, x: mx, y: my, size: markSize,
+                        r, g: gn, b, alpha: random(60, 140), life: VOICE_MARK_LIFETIME
+                    });
+                }
+            }
+        }
 
         // ─── Update ───
         let voiceSpeedMul = (voiceActive && frameCount - lastVoiceTime < 60) ? 1 + voicePitch / 2000 : 1;
