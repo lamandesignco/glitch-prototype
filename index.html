@@ -119,10 +119,27 @@
     let archive = [];
     let shockwaves = [];
     let ghosts = [];
+    let remnants = [];   // permanent particles from disintegrated strokes
+    let connections = []; // links between remnants and new strokes
     let frameCounter = 0;
     let isDrawing = false;
     let currentStroke = null;
     let voiceReady = false;
+
+    // ─── Disintegration timeline ────────────────────────────────────
+    const STROKE_MS = 120000;      // 120s total lifetime
+    const PH2_MS  = 60000;         // Phase 2 starts at 60s
+    const PH3_MS  = 90000;         // Phase 3 starts at 90s
+    function strokePhase(s) {
+        let a = Date.now() - s.birth;
+        if (a >= STROKE_MS) return 4;
+        if (a >= PH3_MS)    return 3;
+        if (a >= PH2_MS)    return 2;
+        return 1;
+    }
+    function strokeAgePct(s) {
+        return constrain((Date.now() - s.birth) / STROKE_MS, 0, 1);
+    }
 
     // ─── Drawing modes ──────────────────────────────────────────────
     const MODES = {
@@ -150,8 +167,7 @@
     let currentStrokeType = STROKE_TYPES.DATA;
 
     // ─── Energy ──────────────────────────────────────────────────────
-    let energy = parseInt(localStorage.getItem('glitchDriftEnergy')) || 100;
-    let energyRegenTimer = 0;
+    let energy = parseInt(localStorage.getItem('glitchDriftEnergy')) || 25;
 
     // ─── Region density (claiming resistance) ────────────────────────
     const REGION_SIZE = 200;
@@ -226,6 +242,13 @@
         if (narrativeTexts.length > 20) narrativeTexts.shift();
     }
 
+    function showNotification(text, duration) {
+        try {
+            let el = document.getElementById('rift-notification');
+            if (el) { el.textContent = text; el.style.opacity = '1'; setTimeout(() => { if (el) el.style.opacity = '0'; }, duration || 3000); }
+        } catch(e) { console.warn('notification err', e); }
+    }
+
     // ─── Mode display ────────────────────────────────────────────────
     function updateModeDisplay() {
         let el = document.getElementById('mode-display');
@@ -279,6 +302,13 @@
                             users[uid].lastSeen = Date.now();
                         }
                     }
+                    if (d.particles) {
+                        for (let p of d.particles) {
+                            if (!remnants.find(ex => ex.id === p.id)) {
+                                remnants.push(p);
+                            }
+                        }
+                    }
                     if (d.strokes) {
                         for (let raw of d.strokes) {
                             let s = Stroke.deserialize(raw);
@@ -312,7 +342,22 @@
                 } else if (d.type === 'reset') {
                     strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
                     ghosts = []; regionDensity = {}; rifts = []; riftTraces = [];
+                    remnants = []; connections = [];
                     if (d.rifts) { rifts = d.rifts.map(r => ({ ...r })); }
+                } else if (d.type === 'decay') {
+                    for (let id of d.expiredStrokeIds) {
+                        let s = strokes.find(st => st.id === id);
+                        if (s && ghosts.length < 200) {
+                            ghosts.push(new Ghost(s));
+                        }
+                        if (currentStroke && currentStroke.id === id) currentStroke = null;
+                    }
+                    strokes = strokes.filter(st => !d.expiredStrokeIds.includes(st.id));
+                    for (let p of d.particles) {
+                        if (!remnants.find(ex => ex.id === p.id)) {
+                            remnants.push(p);
+                        }
+                    }
                 } else if (d.type === 'glitchspeak') {
                     for (let w of d.words) {
                         if (!glitchspeak.includes(w)) glitchspeak.push(w);
@@ -337,6 +382,12 @@
                         el.style.opacity = '1';
                         setTimeout(() => { if (el) el.style.opacity = '0'; }, 4000);
                     }
+                } else if (d.type === 'energy-grant') {
+                    try {
+                        energy = min(25, energy + d.amount);
+                        localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
+                        showNotification('\u26A1 +' + d.amount + ' 3n3rgy (r1ft sh4r3d)', 3000);
+                    } catch(e) { console.warn('energy-grant err', e); }
                 }
             };
             socket.onclose = function(e) {
@@ -587,13 +638,12 @@
             this.strokeType = strokeType || 'data';
             this.points = [];
             this.timestamp = Date.now();
-            this.decay = 0;
+            this.birth = Date.now();
             this.colorSeed = Math.random() * 1000;
             this.transformation = null;
             this.refused = false;
             this.artifacts = [];
             this.revealTimer = 0;
-            this.decayMultiplier = 1;
             this.voidState = null;
             this.dataTimer = 0;
             this.mutationPhase = Math.random() * 1000;
@@ -605,6 +655,8 @@
             this._directionChanges = 0;
             this._prevDx = null;
             this._prevDy = null;
+            this.nearRiftType = null;
+            this.nearRiftPos = null;
             this.energyMul = energy < 30 ? max(0.2, energy / 30) : 1;
             if (this.strokeType === 'glitchspeak') {
                 this.glitchspeakWord = generateGlitchspeak();
@@ -625,7 +677,6 @@
                     this.points[i].x += cos(angle) * 1.5;
                     this.points[i].y += sin(angle) * 1.5;
                 }
-                // Occasional larger lurch
                 if (Math.random() < 0.01) {
                     let idx = floor(random(this.points.length));
                     let a = random(TWO_PI);
@@ -635,11 +686,15 @@
             }
             if (this.dataTimer > 0) this.dataTimer--;
             if (this.revealTimer > 0) this.revealTimer--;
-            this.decay += CFG.decayRate * this.decayMultiplier;
         }
 
-        get alive() { return this.decay < 2.5; }
-        get alpha() { return map(this.decay, 0, 2.5, 200, 5); }
+        get alive() { return Date.now() - this.birth < STROKE_MS; }
+        get alpha() {
+            let a = Date.now() - this.birth;
+            if (a < PH2_MS) return 200;
+            if (a < PH3_MS) return Math.floor(map(a, PH2_MS, PH3_MS, 200, 100));
+            return Math.floor(map(a, PH3_MS, STROKE_MS, 100, 20));
+        }
 
         display() {
             if (this.points.length < 2) return;
@@ -661,7 +716,8 @@
             }
 
             let n = this.points.length;
-            let decayPct = this.decay / 2.5;
+            let agePct = strokeAgePct(this);
+            let phase = strokePhase(this);
 
             // ── Void state: static noise that resolves ──
             let voidActive = this.voidState && this.voidState.active;
@@ -818,21 +874,21 @@
                 }
             }
 
-            // ── Active decay thresholds ──
-            // 70% opacity → glitch (tremble spike)
-            if (decayPct > 0.25 && decayPct < 0.4 && !this.glitchedAt70) {
+            // ── Age-based disintegration thresholds ──
+            // Phase 2 start → glitch (tremble spike)
+            if (phase >= 2 && !this.glitchedAt70) {
                 this.glitchedAt70 = true;
                 tremble *= 4;
             }
-            // 50% opacity → stutter (repeat segment)
+            // Phase 2 mid → stutter (repeat segment)
             let stutter = false;
-            if (decayPct > 0.45 && decayPct < 0.6 && !this.stutteredAt50) {
+            if (agePct > 0.6 && !this.stutteredAt50) {
                 this.stutteredAt50 = true;
             }
             if (this.stutteredAt50 && Math.random() < 0.06) stutter = true;
 
-            // 30% opacity → show data skeleton
-            if (decayPct > 0.65 && decayPct < 0.8 && !this.skeletonShown) {
+            // Phase 3 start → show data skeleton
+            if (phase >= 3 && !this.skeletonShown) {
                 this.skeletonShown = true;
                 this.dataTimer = 60;
             }
@@ -891,10 +947,11 @@
                     if (voidActive && Math.random() < voidInstability * 0.5) activeTremble *= 5;
 
                     let ns = this.colorSeed + i * 0.5;
-                    let ox1 = (noise(ns, this.decay * 2) - 0.5) * activeTremble * speedFactor;
-                    let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
-                    let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * activeTremble * speedFactor;
-                    let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
+                    let ageNoise = agePct * 5;
+                    let ox1 = (noise(ns, ageNoise) - 0.5) * activeTremble * speedFactor;
+                    let oy1 = (noise(ns, ageNoise + 50) - 0.5) * activeTremble * speedFactor;
+                    let ox2 = (noise(ns + 0.5, ageNoise) - 0.5) * activeTremble * speedFactor;
+                    let oy2 = (noise(ns + 0.5, ageNoise + 50) - 0.5) * activeTremble * speedFactor;
 
                     let segAlpha = a;
                     if (this.refused && Math.random() < 0.15) segAlpha = 0;
@@ -911,7 +968,7 @@
                              this.points[i - 2].x + scrollX + random(-4, 4), this.points[i - 2].y + scrollY + random(-4, 4));
                     }
 
-                    if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
+                    if (phase <= 1 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
                         let angle = random(TWO_PI);
                         let spd = 0.5 + random() * 1.5;
                         particles.push(new Particle(p2.x, p2.y, cos(angle) * spd, sin(angle) * spd, 20 + floor(random(30)), random(0.5, 2), [r, g, b]));
@@ -941,17 +998,120 @@
                 }
             }
 
-            // ── Ghost trace at end of life ──
-            if (this.decay > 2.3) {
-                let ghostA = map(this.decay, 2.3, 2.5, 20, 0);
-                for (let i = 0; i < n; i += max(1, floor(n / 10))) {
+            // ── Phase 3: Disintegration (90-120s) ──
+            if (phase === 3) {
+                let disA = map(Date.now() - this.birth, PH3_MS, STROKE_MS, 0.5, 0.1);
+                for (let i = 0; i < n; i += max(1, floor(n / 8))) {
                     let pt = this.points[i];
-                    if (Math.random() < 0.4) continue;
+                    let shake = (1 - disA) * 8;
+                    let sx = pt.x + scrollX + random(-shake, shake);
+                    let sy = pt.y + scrollY + random(-shake, shake);
+                    if (Math.random() < 0.3) continue;
                     noStroke();
-                    fill(BASE.ghost[0], BASE.ghost[1], BASE.ghost[2], ghostA * (0.5 + Math.random() * 0.5));
-                    ellipse(pt.x + scrollX, pt.y + scrollY, 1.2, 1.2);
+                    fill(col[0], col[1], col[2], a * random(0.3, 0.8));
+                    rect(sx, sy, random(1, 4), random(1, 4));
                 }
             }
+
+            // ── Rift-drawing interaction effects ──
+            try {
+                if (this.nearRiftType && this.nearRiftPos) {
+                    let rx = this.nearRiftPos.x + scrollX;
+                    let ry = this.nearRiftPos.y + scrollY;
+                    let midPt = this.points[floor(n / 2)];
+                    switch (this.nearRiftType) {
+                        case 'code':
+                            for (let i = 0; i < n; i += max(1, floor(n / 10))) {
+                                let pt = this.points[i];
+                                fill(80, 220, 255, a * 0.6);
+                                noStroke();
+                                textFont('Courier New');
+                                textSize(6);
+                                textAlign(LEFT, CENTER);
+                                text(Math.floor(pt.x) + ',' + Math.floor(pt.y), pt.x + scrollX + 4, pt.y + scrollY);
+                            }
+                            break;
+                        case 'ghost':
+                            for (let i = 0; i < n; i += max(1, floor(n / 8))) {
+                                let pt = this.points[i];
+                                let wobbleX = sin(frameCount * 0.03 + i * 0.5 + this.colorSeed) * 3;
+                                let wobbleY = cos(frameCount * 0.03 + i * 0.5 + this.colorSeed) * 3;
+                                let ghostA2 = a * (0.3 + noise(i * 0.2, frameCount * 0.01) * 0.7);
+                                noStroke();
+                                fill(180, 140, 220, ghostA2 * 0.5);
+                                ellipse(pt.x + scrollX + wobbleX, pt.y + scrollY + wobbleY, 4, 4);
+                                if (Math.random() < 0.05 && particles.length < CFG.particleCap) {
+                                    particles.push(new Particle(pt.x, pt.y, random(-1, 1), random(-1, 1), 15 + floor(random(20)), random(0.5, 1.5), [180, 140, 220]));
+                                }
+                            }
+                            if (midPt) {
+                                stroke(180, 140, 220, a * 0.15);
+                                strokeWeight(0.5);
+                                line(midPt.x + scrollX, midPt.y + scrollY, rx, ry);
+                            }
+                            break;
+                        case 'connection':
+                            stroke(80, 200, 255, a * 0.2);
+                            strokeWeight(0.5);
+                            for (let i = 0; i < n; i += 3) {
+                                for (let j = i + 3; j < n; j += 3) {
+                                    if (Math.random() < 0.85) continue;
+                                    let p1 = this.points[i];
+                                    let p2 = this.points[j];
+                                    line(p1.x + scrollX, p1.y + scrollY, p2.x + scrollX, p2.y + scrollY);
+                                }
+                            }
+                            if (midPt) {
+                                stroke(80, 200, 255, a * 0.1);
+                                strokeWeight(0.3);
+                                for (let pt of this.points) {
+                                    if (Math.random() < 0.95) continue;
+                                    line(rx, ry, pt.x + scrollX, pt.y + scrollY);
+                                }
+                            }
+                            break;
+                        case 'energy':
+                            for (let i = 0; i < n; i++) {
+                                let pt = this.points[i];
+                                let glow = 20 + sin(frameCount * 0.05 + i * 0.2) * 10;
+                                noStroke();
+                                fill(60, 221, 136, a * 0.15);
+                                ellipse(pt.x + scrollX, pt.y + scrollY, glow, glow);
+                                if (Math.random() < 0.02 && particles.length < CFG.particleCap) {
+                                    particles.push(new Particle(pt.x, pt.y, random(-1.5, 1.5), random(-1.5, 1.5), 12 + floor(random(15)), random(0.5, 2), [60, 221, 136]));
+                                }
+                            }
+                            break;
+                        case 'resistance':
+                            for (let i = 1; i < n; i++) {
+                                let pt = this.points[i];
+                                let distX = sin(frameCount * 0.04 + i * 0.3) * 4;
+                                let distY = cos(frameCount * 0.04 + i * 0.3) * 4;
+                                noStroke();
+                                fill(200, 80, 80, a * 0.2);
+                                rect(pt.x + scrollX + distX, pt.y + scrollY + distY, 3, 3);
+                            }
+                            break;
+                        case 'glitchspeak':
+                            for (let i = 0; i < n; i += max(1, floor(n / 6))) {
+                                let pt = this.points[i];
+                                let word = glitchspeak.length > 0 ? glitchspeak[floor(random(glitchspeak.length))] : generateGlitchspeak();
+                                fill(200, 180, 220, a * 0.5 + sin(frameCount * 0.06 + i) * 0.3);
+                                noStroke();
+                                textFont('Courier New');
+                                textSize(5 + sin(frameCount * 0.03 + i) * 2);
+                                textAlign(CENTER, CENTER);
+                                text(word, pt.x + scrollX + sin(frameCount * 0.05 + i * 0.3) * 5, pt.y + scrollY + cos(frameCount * 0.05 + i * 0.3) * 5);
+                            }
+                            if (midPt) {
+                                stroke(200, 180, 220, a * 0.1);
+                                strokeWeight(0.3);
+                                line(midPt.x + scrollX, midPt.y + scrollY, rx, ry);
+                            }
+                            break;
+                    }
+                }
+            } catch(e) {}
         }
 
         // ── Stroke type rendering helpers ──
@@ -1137,8 +1297,9 @@
             return {
                 id: this.id, userId: this.userId, params: this.params,
                 points: this.points, timestamp: this.timestamp,
+                birth: this.birth,
                 transformation: this.transformation, refused: this.refused,
-                artifacts: this.artifacts, decayMultiplier: this.decayMultiplier,
+                artifacts: this.artifacts,
                 strokeType: this.strokeType, glitchspeakWord: this.glitchspeakWord
             };
         }
@@ -1148,11 +1309,11 @@
             s.id = d.id;
             s.points = d.points;
             s.timestamp = d.timestamp;
+            s.birth = d.birth || d.timestamp || Date.now();
             s.transformation = d.transformation || null;
             s.refused = d.refused || false;
             s.artifacts = d.artifacts || [];
             s.revealTimer = 0;
-            s.decayMultiplier = d.decayMultiplier || 1;
             s.strokeType = d.strokeType || 'data';
             s.glitchspeakWord = d.glitchspeakWord || null;
             return s;
@@ -1593,6 +1754,9 @@
         colorMode(RGB);
         textFont('Courier New');
 
+        strokes = [];
+        remnants = [];
+        connections = [];
         glitchspeak = [
             'gr1dfl0w', 'tr4c3f0ss1l', 'n0153', 'dr1ft',
             'p4l1mp53st', 'gh0st1ng', '3ncrypt10n', 'r3fus4l',
@@ -1631,14 +1795,6 @@
             rect(0, 0, width, height);
         }
 
-        // ─── Energy regeneration ───
-        energyRegenTimer++;
-        if (energyRegenTimer >= 60) {
-            energyRegenTimer = 0;
-            if (energy < 100) energy = min(100, energy + 0.5);
-            localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
-        }
-
         // ─── Voice status UI ───
         let vsEl = document.getElementById('voice-status');
         if (vsEl) {
@@ -1653,6 +1809,15 @@
                 vsEl.textContent = 'v01c3: ...';
                 vsEl.style.opacity = '0.2';
             }
+        }
+
+        // ─── Continuous energy drain + slow regen ───
+        energy -= 0.05;
+        energy += 0.005;
+        if (energy > 25) energy = 25;
+        if (energy < 0) energy = 0;
+        if (frameCounter % 10 === 0) {
+            localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
         }
 
         // ─── Continuous voice detection + generative effects ───
@@ -1790,7 +1955,7 @@
             let gx = mouseX - scrollX, gy = mouseY - scrollY;
             if (dist(pw.x, pw.y, gx, gy) < pw.radius && !pw.hitUser) {
                 pw.hitUser = true;
-                energy = min(100, energy + 30);
+                energy = min(25, energy + 30);
                 document.getElementById('energy-fill').style.width = energy + '%';
             }
             // Make strokes glow green within wave
@@ -1818,22 +1983,7 @@
             }
         }
 
-        // ─── Convert dead strokes to ghosts ───
-        let newGhosts = [];
-        for (let s of strokes) {
-            if (!s.alive && s.decay >= 2.5) {
-                if (ghosts.length + newGhosts.length < MAX_GHOSTS) {
-                    newGhosts.push(new Ghost(s));
-                }
-            }
-        }
-        if (newGhosts.length > 0) {
-            ghosts = ghosts.concat(newGhosts);
-            if (ghosts.length > MAX_GHOSTS) ghosts = ghosts.slice(-MAX_GHOSTS);
-        }
-
         // ─── Cull ───
-        strokes = strokes.filter(s => s.alive);
         noiseTexts = noiseTexts.filter(nt => nt.alive);
         shockwaves = shockwaves.filter(sw => sw.alive);
         particles = particles.filter(p => p.alive);
@@ -1884,7 +2034,6 @@
             if (narrativeTexts[i].life <= 0) narrativeTexts.splice(i, 1);
         }
 
-        // ─── Update energy bar ───
         // ─── Glitch mode: system draws for user ───
         if (currentMode === MODES.GLITCH && energy > 0 && frameCounter % 3 === 0) {
             let gx = mouseX - scrollX + random(-40, 40), gy = mouseY - scrollY + random(-40, 40);
@@ -1893,12 +2042,61 @@
                 if (strokes.length >= CFG.maxStrokes) strokes.shift();
                 strokes.push(currentStroke);
                 currentStroke.addPoint(gx, gy);
+                // ── Connection to remnants ──
+                for (let rem of remnants) {
+                    if (!rem.active) continue;
+                    if (dist(gx, gy, rem.x, rem.y) < 100) {
+                        let already = connections.find(c => c.particleId === rem.id && c.strokeId === currentStroke.id);
+                        if (!already) {
+                            connections.push({
+                                particleId: rem.id, strokeId: currentStroke.id,
+                                pointX: gx, pointY: gy,
+                                timestamp: Date.now(), active: true
+                            });
+                            rem.pulsing = true; rem.pulseTime = Date.now();
+                            let cc = currentStroke.params.color;
+                            let rc = rem.color;
+                            currentStroke.params.color = [
+                                cc[0] * 0.9 + rc[0] * 0.1,
+                                cc[1] * 0.9 + rc[1] * 0.1,
+                                cc[2] * 0.9 + rc[2] * 0.1
+                            ];
+                        }
+                    }
+                }
             } else {
                 let last = currentStroke.points[currentStroke.points.length - 1];
                 if (!last || dist(gx, gy, last.x, last.y) > 15) {
                     currentStroke.addPoint(gx, gy);
-                    currentStroke._totalLength += dist(gx, gy, last ? last.x : gx, last ? last.y : gy);
-                    energy -= 0.02; if (energy < 0) energy = 0;
+                    let segDist = dist(gx, gy, last ? last.x : gx, last ? last.y : gy);
+                    currentStroke._totalLength += segDist;
+                    try {
+                        for (let rr of rifts) {
+                            if (!rr.activated && dist(rr.x, rr.y, gx, gy) < 100) { currentStroke.nearRiftType = rr.type; currentStroke.nearRiftPos = { x: rr.x, y: rr.y }; break; }
+                        }
+                    } catch(e) {}
+                    // ── Connection to remnants ──
+                    for (let rem of remnants) {
+                        if (!rem.active) continue;
+                        if (dist(gx, gy, rem.x, rem.y) < 100) {
+                            let already = connections.find(c => c.particleId === rem.id && c.strokeId === currentStroke.id);
+                            if (!already) {
+                                connections.push({
+                                    particleId: rem.id, strokeId: currentStroke.id,
+                                    pointX: gx, pointY: gy,
+                                    timestamp: Date.now(), active: true
+                                });
+                                rem.pulsing = true; rem.pulseTime = Date.now();
+                                let cc = currentStroke.params.color;
+                                let rc = rem.color;
+                                currentStroke.params.color = [
+                                    cc[0] * 0.9 + rc[0] * 0.1,
+                                    cc[1] * 0.9 + rc[1] * 0.1,
+                                    cc[2] * 0.9 + rc[2] * 0.1
+                                ];
+                            }
+                        }
+                    }
                 }
             }
             // Break the stroke periodically (post-procedural corruption)
@@ -1921,9 +2119,20 @@
             let fillEl = document.getElementById('energy-fill');
             if (fillEl) fillEl.style.width = max(0, energy) + '%';
             let barEl = document.getElementById('energy-bar');
-            if (barEl) {
-                let hue = energy < 20 ? 'rgba(200,80,80,0.5)' : energy < 50 ? 'rgba(200,180,80,0.4)' : 'rgba(200,180,220,0.4)';
-                fillEl.style.background = hue;
+            if (barEl && fillEl) {
+                let bg;
+                if (energy <= 0) { bg = 'rgba(200,40,40,0.6)'; }
+                else if (energy < 10) { bg = 'rgba(200,40,40,0.5)'; }
+                else if (energy < 30) { bg = 'rgba(200,180,60,0.5)'; }
+                else { bg = 'rgba(60,200,100,0.5)'; }
+                fillEl.style.background = bg;
+                let labelEl = document.getElementById('energy-label');
+                if (labelEl) {
+                    if (energy <= 0) labelEl.textContent = '\u26D4 ' + Math.floor(energy);
+                    else if (energy < 10) labelEl.textContent = '\u26D4 ' + Math.floor(energy);
+                    else if (energy < 30) labelEl.textContent = '\u26A0 ' + Math.floor(energy);
+                    else labelEl.textContent = 'gl1tch 3n3rgy ' + Math.floor(energy);
+                }
             }
         }
 
@@ -2003,6 +2212,68 @@
                     ellipse(pt.x + scrollX, pt.y + scrollY, 3, 3);
                 }
             }
+        }
+
+        // ── Remnants (permanent particles) ──
+        for (let rem of remnants) {
+            if (!rem.active) continue;
+            let rx = rem.x + scrollX, ry = rem.y + scrollY;
+            // Pulsing animation
+            let pulseSize = 0;
+            if (rem.pulsing) {
+                let dt = Date.now() - rem.pulseTime;
+                pulseSize = dt < 500 ? sin(map(dt, 0, 500, 0, PI)) * 0.5 : 0;
+                if (dt > 500) rem.pulsing = false;
+            }
+            let sz = (rem.size + pulseSize) * 3;
+            // Bright glow behind every remnant
+            noStroke();
+            fill(rem.color[0], rem.color[1], rem.color[2], 60);
+            ellipse(rx, ry, sz * 4, sz * 4);
+            switch (rem.type) {
+                case 'dot':
+                    noStroke();
+                    fill(rem.color[0], rem.color[1], rem.color[2], 200);
+                    ellipse(rx, ry, sz, sz);
+                    fill(255, 255, 255, 80);
+                    ellipse(rx, ry, sz * 0.4, sz * 0.4);
+                    break;
+                case 'fragment':
+                    stroke(rem.color[0], rem.color[1], rem.color[2], 200);
+                    strokeWeight(1.5);
+                    let fa = frameCount * 0.02 + rem.id.length;
+                    line(rx, ry, rx + cos(fa) * sz * 3, ry + sin(fa) * sz * 3);
+                    break;
+                case 'spark':
+                    noStroke();
+                    let sparkGlow = 150 + sin(frameCount * 0.05 + rem.id.length) * 60;
+                    fill(rem.color[0], rem.color[1], rem.color[2], sparkGlow);
+                    ellipse(rx, ry, sz * 3, sz * 3);
+                    fill(255, 255, 255, sparkGlow * 0.3);
+                    ellipse(rx, ry, sz * 0.5, sz * 0.5);
+                    break;
+                case 'memory':
+                    let memPulse = 160 + sin(frameCount * 0.03 + rem.id.length) * 50;
+                    noStroke();
+                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse);
+                    ellipse(rx, ry, sz * 1.5, sz * 1.5);
+                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse * 0.5);
+                    ellipse(rx, ry, sz * 3, sz * 3);
+                    break;
+            }
+        }
+
+        // ── Connections ──
+        for (let c of connections) {
+            if (!c.active) continue;
+            let age = Date.now() - c.timestamp;
+            if (age > 60000) { c.active = false; continue; }
+            let ca = map(age, 0, 60000, 120, 0);
+            let rem = remnants.find(r => r.id === c.particleId);
+            if (!rem || !rem.active) { c.active = false; continue; }
+            stroke(rem.color[0], rem.color[1], rem.color[2], ca);
+            strokeWeight(1);
+            line(rem.x + scrollX, rem.y + scrollY, c.pointX + scrollX, c.pointY + scrollY);
         }
 
         // ── Pulse waves ──
@@ -2379,12 +2650,11 @@
             strokes.push(currentStroke);
             currentStroke.addPoint(gx, gy);
         } else if (currentMode === MODES.ERASE) {
-            // Erase mode click — corruption burst
+            // Erase mode click — corruption burst (age stroke by 30s)
             for (let s of strokes) {
                 for (let pt of s.points) {
                     if (dist(pt.x, pt.y, gx, gy) < 80) {
-                        s.decayMultiplier = 3;
-                        s.decay += 0.5;
+                        s.birth -= 30000;
                         break;
                     }
                 }
@@ -2408,7 +2678,10 @@
         }
 
         if (currentMode === MODES.DRAW) {
-            if (!currentStroke || energy <= 0) return;
+            if (!currentStroke || energy <= 0) {
+                if (energy <= 0) showNotification('\u26D4 Out of energy! Find an energy rift!', 2500);
+                return;
+            }
             // Ghost haunting force
             for (let g of ghosts) {
                 let f = g.getForceAt(gx, gy);
@@ -2442,10 +2715,38 @@
                 } else {
                     currentStroke._prevDx = gx - last.x; currentStroke._prevDy = gy - last.y;
                 }
-                energy -= 0.05; if (energy < 0) energy = 0;
-                localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                 let rk = getRegionKey(gx, gy);
                 regionDensity[rk] = (regionDensity[rk] || 0) + 1;
+                try {
+                    for (let rr of rifts) {
+                        if (!rr.activated && dist(rr.x, rr.y, gx, gy) < 100) { currentStroke.nearRiftType = rr.type; currentStroke.nearRiftPos = { x: rr.x, y: rr.y }; break; }
+                    }
+                } catch(e) {}
+                // ── Connection to remnants ──
+                for (let rem of remnants) {
+                    if (!rem.active) continue;
+                    if (dist(gx, gy, rem.x, rem.y) < 100) {
+                        let already = connections.find(c => c.particleId === rem.id && c.strokeId === currentStroke.id);
+                        if (!already) {
+                                connections.push({
+                                    particleId: rem.id,
+                                    strokeId: currentStroke.id,
+                                    pointX: gx, pointY: gy,
+                                    timestamp: Date.now(),
+                                    active: true
+                                });
+                                rem.pulsing = true;
+                                rem.pulseTime = Date.now();
+                                let cc = currentStroke.params.color;
+                                let rc = rem.color;
+                                currentStroke.params.color = [
+                                    cc[0] * 0.9 + rc[0] * 0.1,
+                                    cc[1] * 0.9 + rc[1] * 0.1,
+                                    cc[2] * 0.9 + rc[2] * 0.1
+                                ];
+                        }
+                    }
+                }
             }
             for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
 
@@ -2480,12 +2781,12 @@
                 }
             }
             for (let s of strokes) {
-                if (s.decay > 1.5) {
+                if (strokePhase(s) >= 2) {
                     let mid = s.points[floor(s.points.length / 2)];
                     if (!mid) continue;
                     if (dist(gx, gy, mid.x, mid.y) < 80) {
-                        s.decay -= 0.1;
-                        if (s.decay < 0) s.decay = 0;
+                        s.birth += 5000;
+                        if (s.birth > Date.now()) s.birth = Date.now();
                     }
                 }
             }
@@ -2518,7 +2819,7 @@
                 let last = currentStroke.points[currentStroke.points.length - 1];
                 if (!last || dist(cx, cy, last.x, last.y) > 8) {
                     currentStroke.addPoint(cx, cy);
-                    energy -= 0.1; if (energy < 0) energy = 0;
+                    energy -= dist(cx, cy, last.x, last.y) * 2; if (energy < 0) energy = 0;
                     localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                 }
                 // Draw corrupted copy preview
@@ -2539,8 +2840,7 @@
             for (let s of strokes) {
                 for (let pt of s.points) {
                     if (dist(pt.x, pt.y, gx, gy) < 60) {
-                        s.decayMultiplier = 3;
-                        s.decay += 0.02;
+                        s.birth -= 1000;
                         // Corruption marks
                         if (Math.random() < 0.03) {
                             noStroke();
@@ -2762,9 +3062,17 @@
         if (keyCode === UP_ARROW || key === 'w' || key === 'W') { scrollY = max(scrollY - SCROLL_SPEED, -GRID_EXTENT); return false; }
         if (keyCode === DOWN_ARROW) { scrollY = min(scrollY + SCROLL_SPEED, GRID_EXTENT); return false; }
 
+        // Reset canvas
+        if (key === 'r') {
+            strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
+            ghosts = []; regionDensity = {}; remnants = []; connections = [];
+            if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: 'reset' }));
+            return false;
+        }
+
         // Mode switching (lowercase only to avoid conflicts)
         if (key === 'd') { currentMode = MODES.DRAW; updateModeDisplay(); return false; }
-        if (key === 'r') { currentMode = MODES.REFUSE; updateModeDisplay(); return false; }
+        if (key === 'f') { currentMode = MODES.REFUSE; updateModeDisplay(); return false; }
         if (key === 'h') { currentMode = MODES.HAUNT; updateModeDisplay(); return false; }
         if (key === 's') { currentMode = MODES.SPEAK; updateModeDisplay(); return false; }
         if (key === 'g') { currentMode = MODES.GLITCH; updateModeDisplay(); return false; }
@@ -2786,12 +3094,6 @@
         }
 
         // Shift operations
-        if (key === 'R') {
-            strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
-            ghosts = []; regionDensity = {};
-            if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: 'reset' }));
-            return;
-        }
         if (key === 'S') {
             saveToURL();
             return;
@@ -3018,7 +3320,8 @@
             case 'energy':
                 // A green pulse wave expands — restoring energy
                 pulseWaves.push({ x: rift.x, y: rift.y, radius: 0, maxRadius: 300, life: 35, maxLife: 35, hitUser: false });
-                energy = min(100, energy + 50);
+                energy = min(25, energy + 30);
+                localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                 // Energize nearby ghosts
                 for (let g of ghosts) {
                     if (g.points.length === 0) continue;

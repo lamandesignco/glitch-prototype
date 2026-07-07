@@ -10,39 +10,113 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
+const STROKE_MS = 120000;
+const MAX_SERVER_STROKES = 500;
+const MAX_PARTICLES = 5000;
+
 let users = {};  // id → { params, ws }
 let serverStrokes = [];
-const MAX_SERVER_STROKES = 500;
+let serverParticles = [];
+
+// ─── Particle Generation ────────────────────────────────────────────
+function generateParticles(stroke) {
+  let points = stroke.points || [];
+  if (points.length === 0) return [];
+  let num = 2 + Math.floor(Math.random() * 9); // 2–10
+  let col = stroke.params ? (stroke.params.color || [200, 180, 220]) : [200, 180, 220];
+  let types = ['dot', 'fragment', 'spark', 'memory'];
+  let particles = [];
+  for (let i = 0; i < num; i++) {
+    let idx = Math.floor(Math.random() * points.length);
+    let p = points[idx];
+    particles.push({
+      id: 'particle_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      x: p.x + (Math.random() - 0.5) * 10,
+      y: p.y + (Math.random() - 0.5) * 10,
+      color: [col[0], col[1], col[2]],
+      size: 3 + Math.random() * 5,
+      type: types[Math.floor(Math.random() * types.length)],
+      originalStrokeId: stroke.id,
+      createdAt: Date.now()
+    });
+  }
+  return particles;
+}
+
+// ─── Decay Check ────────────────────────────────────────────────────
+function checkDecay() {
+  let now = Date.now();
+  let expired = serverStrokes.filter(s => now - (s.birth || s.timestamp || now) >= STROKE_MS);
+  if (expired.length === 0) return;
+  let expiredIds = expired.map(s => s.id);
+  let newParticles = [];
+  for (let s of expired) newParticles.push(...generateParticles(s));
+  serverStrokes = serverStrokes.filter(s => !expiredIds.includes(s.id));
+  serverParticles.push(...newParticles);
+  if (serverParticles.length > MAX_PARTICLES) serverParticles.splice(0, serverParticles.length - MAX_PARTICLES);
+  broadcast({ type: 'decay', expiredStrokeIds: expiredIds, particles: newParticles });
+}
+
+setInterval(checkDecay, 1000);
 
 // ─── Glitch Rifts ─────────────────────────────────────────────────
 let serverRifts = [];
 let riftIdCounter = 0;
-const RIFT_TYPES = ['code', 'ghost', 'connection', 'energy', 'resistance', 'glitchspeak'];
 
-function generateRifts(count) {
+function generateRiftsWithTypes() {
+  let counts = { code: 4, ghost: 4, connection: 3, energy: 5, resistance: 2, glitchspeak: 2 };
   let fresh = [];
-  for (let i = 0; i < count; i++) {
-    fresh.push({
-      id: 'rift_' + (riftIdCounter++),
-      x: (Math.random() - 0.5) * 4000,
-      y: (Math.random() - 0.5) * 4000,
-      type: RIFT_TYPES[Math.floor(Math.random() * RIFT_TYPES.length)],
-      activated: false
-    });
+  for (let [type, count] of Object.entries(counts)) {
+    for (let i = 0; i < count; i++) {
+      fresh.push({
+        id: 'rift_' + (riftIdCounter++),
+        x: (Math.random() - 0.5) * 4000,
+        y: (Math.random() - 0.5) * 4000,
+        type: type,
+        activated: false
+      });
+    }
   }
   return fresh;
 }
 
-serverRifts = generateRifts(3 + Math.floor(Math.random() * 3));
-
-// Respawn: every 3-5 min, add 1 new rift (max 8)
-setInterval(() => {
-  serverRifts = serverRifts.filter(r => !r.activated);
-  if (serverRifts.length < 8) {
-    serverRifts = serverRifts.concat(generateRifts(1));
+function getMissingRiftCounts() {
+  let counts = { code: 4, ghost: 4, connection: 3, energy: 5, resistance: 2, glitchspeak: 2 };
+  let active = {};
+  for (let r of serverRifts) {
+    if (!r.activated) active[r.type] = (active[r.type] || 0) + 1;
   }
-  broadcast({ type: 'rifts-sync', rifts: serverRifts.map(r => ({ id: r.id, x: r.x, y: r.y, type: r.type, activated: r.activated })) });
-}, 3 * 60 * 1000 + Math.floor(Math.random() * 2 * 60 * 1000));
+  let needed = [];
+  for (let [type, want] of Object.entries(counts)) {
+    let have = active[type] || 0;
+    for (let i = 0; i < want - have; i++) {
+      needed.push(type);
+    }
+  }
+  return needed;
+}
+
+function replenishRifts() {
+  serverRifts = serverRifts.filter(r => !r.activated);
+  let needed = getMissingRiftCounts();
+  for (let type of needed) {
+    serverRifts.push({
+      id: 'rift_' + (riftIdCounter++),
+      x: (Math.random() - 0.5) * 4000,
+      y: (Math.random() - 0.5) * 4000,
+      type: type,
+      activated: false
+    });
+  }
+  if (needed.length > 0) {
+    broadcast({ type: 'rifts-sync', rifts: serverRifts.map(r => ({ id: r.id, x: r.x, y: r.y, type: r.type, activated: r.activated })) });
+  }
+}
+
+serverRifts = generateRiftsWithTypes();
+
+// Replenish every 30 seconds to maintain minimum rift counts
+setInterval(replenishRifts, 30000);
 
 function broadcast(data, excludeWs) {
   const msg = JSON.stringify(data);
@@ -64,22 +138,34 @@ wss.on('connection', (ws) => {
       case 'join':
         ws._id = msg.id;
         users[msg.id] = { params: msg.params, ws };
-        // Send existing users to the new client
         let existing = {};
         for (let uid in users) {
           if (uid !== msg.id) existing[uid] = users[uid].params;
         }
-        let replayStrokes = serverStrokes.slice(-200);
-        console.log(`[join] ${msg.id} — ${Object.keys(existing).length} users, ${replayStrokes.length} strokes replayed`);
-        ws.send(JSON.stringify({ type: 'welcome', users: existing, strokes: replayStrokes,
+        // Only send strokes under 2 minutes old
+        let now = Date.now();
+        let activeStrokes = serverStrokes.filter(s => now - (s.birth || s.timestamp || now) < STROKE_MS);
+        console.log(`[join] ${msg.id} — ${Object.keys(existing).length} users, ${activeStrokes.length} strokes, ${serverParticles.length} particles`);
+        ws.send(JSON.stringify({ type: 'welcome', users: existing, strokes: activeStrokes,
+          particles: serverParticles,
           rifts: serverRifts.map(r => ({ id: r.id, x: r.x, y: r.y, type: r.type, activated: r.activated })) }));
-        // Broadcast join to others
         broadcast({ type: 'user-join', id: msg.id, params: msg.params }, ws);
         break;
 
       case 'stroke':
         serverStrokes.push(msg.data);
-        if (serverStrokes.length > MAX_SERVER_STROKES) serverStrokes.splice(0, serverStrokes.length - MAX_SERVER_STROKES);
+        if (serverStrokes.length > MAX_SERVER_STROKES) {
+          // Remove oldest strokes (first in array)
+          let overflow = serverStrokes.length - MAX_SERVER_STROKES;
+          // Before removing old strokes, generate particles for any that would be lost
+          let removed = serverStrokes.splice(0, overflow);
+          for (let s of removed) {
+            // Only generate particles if they haven't been generated yet
+            if (!serverStrokes.find(rs => rs.id === s.id)) {
+              serverParticles.push(...generateParticles(s));
+            }
+          }
+        }
         broadcast({ type: 'stroke', data: msg.data }, ws);
         break;
 
@@ -93,13 +179,17 @@ wss.on('connection', (ws) => {
           if (rift && !rift.activated) {
             rift.activated = true;
             broadcast({ type: 'rift-discovered', rift: { id: rift.id, x: rift.x, y: rift.y, type: rift.type }, userId: msg.userId });
+            if (rift.type === 'energy') {
+              broadcast({ type: 'energy-grant', amount: 30 });
+            }
           }
         }
         break;
 
       case 'reset':
         serverStrokes = [];
-        serverRifts = generateRifts(3 + Math.floor(Math.random() * 3));
+        serverParticles = [];
+        serverRifts = generateRiftsWithTypes();
         broadcast({ type: 'reset', rifts: serverRifts.map(r => ({ id: r.id, x: r.x, y: r.y, type: r.type, activated: r.activated })) });
         break;
 
