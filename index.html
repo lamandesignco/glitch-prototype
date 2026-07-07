@@ -96,6 +96,15 @@
     let wsReconnectTimer = null;
     let wsConnected = false;
     let wsRetryCount = 0;
+    let strokeQueue = [];
+
+    function flushStrokeQueue() {
+        if (!socket || socket.readyState !== 1 || strokeQueue.length === 0) return;
+        let batch = strokeQueue.splice(0);
+        for (let s of batch) {
+            socket.send(JSON.stringify({ type: 'stroke', data: s.serialize() }));
+        }
+    }
 
     function connectWS() {
         if (socket && socket.readyState <= 1) return;
@@ -108,6 +117,7 @@
                 wsRetryCount = 0;
                 socket.send(JSON.stringify({ type: 'join', id: me.id, params: me }));
                 updateStatus();
+                flushStrokeQueue();
                 if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
             };
             socket.onmessage = function(e) {
@@ -194,6 +204,9 @@
     function broadcastStroke(s) {
         if (socket && socket.readyState === 1) {
             socket.send(JSON.stringify({ type: 'stroke', data: s.serialize() }));
+        } else {
+            strokeQueue.push(s);
+            if (strokeQueue.length > 100) strokeQueue.shift();
         }
     }
 

@@ -39,7 +39,9 @@ wss.on('connection', (ws) => {
         for (let uid in users) {
           if (uid !== msg.id) existing[uid] = users[uid].params;
         }
-        ws.send(JSON.stringify({ type: 'welcome', users: existing, strokes: serverStrokes.slice(-200) }));
+        let replayStrokes = serverStrokes.slice(-200);
+        console.log(`[join] ${msg.id} — ${Object.keys(existing).length} users, ${replayStrokes.length} strokes replayed`);
+        ws.send(JSON.stringify({ type: 'welcome', users: existing, strokes: replayStrokes }));
         // Broadcast join to others
         broadcast({ type: 'user-join', id: msg.id, params: msg.params }, ws);
         break;
