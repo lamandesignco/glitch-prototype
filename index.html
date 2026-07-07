@@ -57,7 +57,7 @@
     const WORLD_SIZE = 2000;
     const CAMERA_SPEED = 5;
 
-    let camera = { x: 0, y: 0 };
+    let camera = { x: random(-WORLD_SIZE, WORLD_SIZE), y: random(-WORLD_SIZE, WORLD_SIZE) };
 
     function s2w(sx, sy) {
         return { x: sx - width / 2 + camera.x, y: sy - height / 2 + camera.y };
