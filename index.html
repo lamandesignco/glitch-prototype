@@ -428,9 +428,9 @@
 
                 stroke(r, g, b, a);
                 strokeWeight(max(0.3, segThick));
-                line(p1.x + ox1, p1.y + oy1, p2.x + ox2, p2.y + oy2);
+                line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
 
-                // Particles
+                // Particles (grid-relative)
                 if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
                     let angle = random(TWO_PI);
                     let spd = 0.5 + random() * 1.5;
@@ -560,7 +560,7 @@
                 if (Math.random() > 0.4) continue;
                 noStroke();
                 fill(c[0], c[1], c[2], a * (0.5 + Math.random() * 0.5));
-                ellipse(p.x, p.y, 1.2, 1.2);
+                ellipse(p.x + scrollX, p.y + scrollY, 1.2, 1.2);
             }
         }
     }
@@ -709,7 +709,7 @@
             if (pa < 1) continue;
             noStroke();
             fill(p.color[0], p.color[1], p.color[2], pa);
-            ellipse(p.x, p.y, p.size, p.size);
+            ellipse(p.x + scrollX, p.y + scrollY, p.size, p.size);
         }
     }
 
@@ -728,21 +728,21 @@
         shockwaves.push(new Shockwave(gx, gy));
         for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.6);
 
-        // Start drawing stroke
+        // Start drawing stroke (grid-relative coords)
         isDrawing = true;
         currentStroke = new Stroke(me.id, me);
         if (strokes.length >= CFG.maxStrokes) strokes.shift();
         strokes.push(currentStroke);
-        currentStroke.addPoint(mouseX, mouseY);
+        currentStroke.addPoint(mouseX - scrollX, mouseY - scrollY);
     }
 
     function mouseDragged() {
         if (!currentStroke) return;
-        let last = currentStroke.points[currentStroke.points.length - 1];
-        if (!last || dist(mouseX, mouseY, last.x, last.y) > 4) {
-            currentStroke.addPoint(mouseX, mouseY);
-        }
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        let last = currentStroke.points[currentStroke.points.length - 1];
+        if (!last || dist(gx, gy, last.x, last.y) > 4) {
+            currentStroke.addPoint(gx, gy);
+        }
         for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
     }
 
