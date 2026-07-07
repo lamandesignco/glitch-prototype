@@ -12,6 +12,8 @@
 </head>
 <body>
     <div id="rift-notification" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);font-family:'Courier New',monospace;font-size:9px;letter-spacing:1px;color:rgba(200,180,220,0.7);pointer-events:none;z-index:50;opacity:0;transition:opacity 0.5s;text-align:center"></div>
+    <div id="energy-label" style="position:fixed;bottom:56px;left:20px;color:rgba(200,180,220,0.25);font-size:8px;pointer-events:none;font-family:'Courier New',monospace">gl1tch 3n3rgy</div>
+    <div id="energy-bar" style="position:fixed;bottom:50px;left:20px;width:120px;height:4px;background:rgba(200,180,220,0.1);border:1px solid rgba(200,180,220,0.15);pointer-events:none"><div id="energy-fill" style="height:100%;width:100%;background:rgba(200,180,220,0.4)"></div></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
     // ─── Configuration ───────────────────────────────────────────────
@@ -126,7 +128,10 @@
     let currentStrokeType = STROKE_TYPES.DATA;
 
     // ─── Energy ──────────────────────────────────────────────────────
-    let energy = 25;
+    let energy = 100;
+
+    // ─── Rift perks (30s buffs) ──────────────────────────────────────
+    let riftPerks = {};  // { type: remainingMs, ... }
 
     // ─── Region density (claiming resistance) ────────────────────────
     const REGION_SIZE = 200;
@@ -304,6 +309,20 @@
                             ghosts.push(new Ghost(s));
                         }
                         if (currentStroke && currentStroke.id === id) currentStroke = null;
+                        if (s && s.points.length > 0) {
+                            let cx = 0, cy = 0;
+                            for (let pt of s.points) { cx += pt.x; cy += pt.y; }
+                            cx /= s.points.length; cy /= s.points.length;
+                            let col = s.params ? s.params.color : [120, 80, 200];
+                            for (let i = 0; i < 5 + floor(random(6)); i++) {
+                                particles.push(new Particle(
+                                    cx + random(-5, 5), cy + random(-5, 5),
+                                    random(-2, 2), random(-2, 2),
+                                    20 + floor(random(21)), random(2, 4),
+                                    col
+                                ));
+                            }
+                        }
                     }
                     strokes = strokes.filter(st => !d.expiredStrokeIds.includes(st.id));
                     for (let p of d.particles) {
@@ -337,7 +356,7 @@
                     }
                 } else if (d.type === 'energy-grant') {
                     try {
-                        energy = min(25, energy + d.amount);
+                        energy = min(100, energy + d.amount);
                         showNotification('\u26A1 +' + d.amount + ' 3n3rgy (r1ft sh4r3d)', 3000);
                     } catch(e) { console.warn('energy-grant err', e); }
                 }
@@ -584,6 +603,7 @@
             this.points = [];
             this.timestamp = Date.now();
             this.birth = Date.now();
+            this._phase3Flash = 0;
             this.colorSeed = Math.random() * 1000;
             this.transformation = null;
             this.refused = false;
@@ -602,7 +622,7 @@
             this._prevDy = null;
             this.nearRiftType = null;
             this.nearRiftPos = null;
-            this.energyMul = energy < 30 ? max(0.2, energy / 30) : 1;
+            this.energyMul = energy < 50 ? max(0.2, energy / 50) : 1;
             if (this.strokeType === 'glitchspeak') {
                 this.glitchspeakWord = generateGlitchspeak();
             }
@@ -955,6 +975,16 @@
                     noStroke();
                     fill(col[0], col[1], col[2], a * random(0.3, 0.8));
                     rect(sx, sy, random(1, 4), random(1, 4));
+                }
+            }
+
+            // Phase 3 entry flash
+            if (this._phase3Flash > 0) {
+                this._phase3Flash--;
+                noStroke();
+                fill(255, 255, 255, this._phase3Flash * 8);
+                for (let pt of this.points) {
+                    ellipse(pt.x + scrollX, pt.y + scrollY, 6, 6);
                 }
             }
 
@@ -1410,8 +1440,8 @@
             this.flareTimer--;
             if (this.flareTimer <= 0 && !this.flaring) {
                 this.flaring = true;
-                this.flareDuration = 20 + floor(random(30));
-                this.flareTimer = floor(random(600, 1800));
+                this.flareDuration = (riftPerks.ghost ? 60 : 20) + floor(random(30));
+                this.flareTimer = riftPerks.ghost ? floor(random(100, 300)) : floor(random(600, 1800));
             }
             if (this.flaring) {
                 this.flareDuration--;
@@ -1432,14 +1462,16 @@
         }
         get alpha() { return this.flaring ? 80 : 15; }
         display() {
-            let a = this.alpha;
+            let a = this.alpha * 1.2;
             for (let pt of this.points) {
                 if (Math.random() > 0.3) continue;
                 let nx = noise(pt.x * 0.01, pt.y * 0.01, frameCount * 0.0005) * 5 - 2.5;
                 let ny = noise(pt.x * 0.01 + 100, pt.y * 0.01 + 100, frameCount * 0.0005) * 5 - 2.5;
                 noStroke();
                 fill(this.color[0], this.color[1], this.color[2], a * (0.5 + Math.random() * 0.5));
-                ellipse(pt.x + scrollX + nx, pt.y + scrollY + ny, 1, 1);
+                ellipse(pt.x + scrollX + nx, pt.y + scrollY + ny, 1.5, 1.5);
+                fill(this.color[0], this.color[1], this.color[2], a * (0.5 + Math.random() * 0.5) * 0.15);
+                ellipse(pt.x + scrollX + nx, pt.y + scrollY + ny, 6, 6);
             }
             // Ghost glitchspeak word
             if (this.word && this.wordAlpha > 0) {
@@ -1775,10 +1807,16 @@
         }
 
         // ─── Continuous energy drain (only when mouse is pressed) + slow regen ───
-        if (mouseIsPressed) energy -= 0.05;
+        if (mouseIsPressed) energy -= riftPerks.energy ? 0.025 : 0.05;
         energy += 0.005;
-        if (energy > 25) energy = 25;
+        if (energy > 100) energy = 100;
         if (energy < 0) energy = 0;
+
+        // ─── Rift perks timer ───
+        for (let type in riftPerks) {
+            riftPerks[type] -= 16;
+            if (riftPerks[type] <= 0) delete riftPerks[type];
+        }
 
         // ─── Continuous voice detection + generative effects ───
         getVolume();
@@ -1914,7 +1952,7 @@
             let gx = mouseX - scrollX, gy = mouseY - scrollY;
             if (dist(pw.x, pw.y, gx, gy) < pw.radius && !pw.hitUser) {
                 pw.hitUser = true;
-                energy = min(25, energy + 30);
+                energy = min(100, energy + 30);
                 let ef = document.getElementById('energy-fill');
                 if (ef) ef.style.width = energy + '%';
             }
@@ -1941,6 +1979,12 @@
                 for (let g of ghosts) g._swarming = false;
                 ghostSwarm = null;
             }
+        }
+
+        // ─── Phase 3 flash trigger ───
+        for (let s of strokes) {
+            let p = strokePhase(s);
+            if (p === 3 && s._phase3Flash === 0) s._phase3Flash = 30;
         }
 
         // ─── Cull ───
@@ -2032,7 +2076,7 @@
                     currentStroke._totalLength += segDist;
                     try {
                         for (let rr of rifts) {
-                            if (!rr.activated && dist(rr.x, rr.y, gx, gy) < 100) { currentStroke.nearRiftType = rr.type; currentStroke.nearRiftPos = { x: rr.x, y: rr.y }; break; }
+                            if (!rr.activated && dist(rr.x, rr.y, gx, gy) < 200) { currentStroke.nearRiftType = rr.type; currentStroke.nearRiftPos = { x: rr.x, y: rr.y }; break; }
                         }
                     } catch(e) {}
                     // ── Connection to remnants ──
@@ -2077,20 +2121,22 @@
         // ─── Update energy bar ───
         if (frameCounter % 10 === 0) {
             let fillEl = document.getElementById('energy-fill');
-            if (fillEl) fillEl.style.width = max(0, energy) + '%';
+            if (fillEl) fillEl.style.width = max(0, energy / 100 * 100) + '%';
             let barEl = document.getElementById('energy-bar');
             if (barEl && fillEl) {
-                let bg;
+                let bg, pulse = energy < 20 && frameCounter % 20 < 10;
                 if (energy <= 0) { bg = 'rgba(200,40,40,0.6)'; }
-                else if (energy < 10) { bg = 'rgba(200,40,40,0.5)'; }
-                else if (energy < 30) { bg = 'rgba(200,180,60,0.5)'; }
+                else if (energy < 20) { bg = pulse ? 'rgba(200,40,40,0.8)' : 'rgba(200,40,40,0.5)'; }
+                else if (energy < 40) { bg = 'rgba(200,120,40,0.5)'; }
+                else if (energy < 70) { bg = 'rgba(200,180,60,0.5)'; }
                 else { bg = 'rgba(60,200,100,0.5)'; }
                 fillEl.style.background = bg;
                 let labelEl = document.getElementById('energy-label');
                 if (labelEl) {
-                    if (energy <= 0) labelEl.textContent = '\u26D4 ' + Math.floor(energy);
-                    else if (energy < 10) labelEl.textContent = '\u26D4 ' + Math.floor(energy);
-                    else if (energy < 30) labelEl.textContent = '\u26A0 ' + Math.floor(energy);
+                    if (energy <= 0) labelEl.textContent = '\u26D4 out of energy. find a rift.';
+                    else if (energy < 20) labelEl.textContent = '\u26A0 ' + Math.floor(energy);
+                    else if (energy < 40) labelEl.textContent = '\u26A0 ' + Math.floor(energy);
+                    else if (energy < 70) labelEl.textContent = 'gl1tch 3n3rgy ' + Math.floor(energy);
                     else labelEl.textContent = 'gl1tch 3n3rgy ' + Math.floor(energy);
                 }
             }
@@ -2162,6 +2208,35 @@
         for (let g of ghosts) g.display();
         for (let s of strokes) s.display();
 
+        // ─── Age indicator dots ───
+        for (let s of strokes) {
+            let p = strokePhase(s);
+            if (s.points.length === 0) continue;
+            let last = s.points[s.points.length - 1];
+            let dotColor;
+            if (p === 1) dotColor = [60, 200, 100, 200];
+            else if (p === 2) dotColor = [200, 180, 60, 160];
+            else dotColor = [200, 60, 60, 120];
+            noStroke();
+            fill(dotColor);
+            ellipse(last.x + scrollX + 5, last.y + scrollY - 5, 3, 3);
+        }
+
+        // ─── Code perk: data labels on all strokes ───
+        if (riftPerks.code) {
+            textFont('Courier New');
+            textSize(6);
+            textAlign(LEFT, CENTER);
+            noStroke();
+            for (let s of strokes) {
+                for (let i = 0; i < s.points.length; i += max(1, floor(s.points.length / 6))) {
+                    let pt = s.points[i];
+                    fill(80, 220, 255, 120);
+                    text(Math.floor(pt.x) + ',' + Math.floor(pt.y), pt.x + scrollX + 4, pt.y + scrollY);
+                }
+            }
+        }
+
         // ── Glowing strokes (energy wave hit) ──
         for (let s of strokes) {
             if (s._glowTimer && s._glowTimer > 0) {
@@ -2231,8 +2306,9 @@
             let ca = map(age, 0, 60000, 120, 0);
             let rem = remnants.find(r => r.id === c.particleId);
             if (!rem || !rem.active) { c.active = false; continue; }
-            stroke(rem.color[0], rem.color[1], rem.color[2], ca);
-            strokeWeight(1);
+            let connBoost = riftPerks.connection ? 1.5 : 1;
+            stroke(rem.color[0], rem.color[1], rem.color[2], ca * connBoost);
+            strokeWeight(1 * connBoost);
             line(rem.x + scrollX, rem.y + scrollY, c.pointX + scrollX, c.pointY + scrollY);
         }
 
@@ -2942,7 +3018,7 @@
         else transformation = 'resistance';
 
         // Aggravate transformation in dense areas, weaken when low energy
-        let energyMag = energy < 30 ? 0.3 + (energy / 30) * 0.7 : 1;
+        let energyMag = energy < 50 ? 0.3 + (energy / 50) * 0.7 : 1;
         let voiceMag = (s.voiceVoidBoost || 1);
         let mag = (highDensity ? 1.5 : 1) * energyMag * voiceMag;
 
@@ -3059,7 +3135,7 @@
         if (key === 'r') {
             strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
             ghosts = []; regionDensity = {}; remnants = []; connections = [];
-            energy = 25;
+            energy = 100;
             if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: 'reset' }));
             return false;
         }
@@ -3314,7 +3390,7 @@
             case 'energy':
                 // A green pulse wave expands — restoring energy
                 pulseWaves.push({ x: rift.x, y: rift.y, radius: 0, maxRadius: 300, life: 35, maxLife: 35, hitUser: false });
-                energy = min(25, energy + 30);
+                energy = min(100, energy + 30);
                 // Energize nearby ghosts
                 for (let g of ghosts) {
                     if (g.points.length === 0) continue;
@@ -3410,6 +3486,8 @@
                 riftTraces.push({ type: 'glitchspeak', x: rift.x, y: rift.y, life: 18000, maxLife: 18000, alpha: 70, data: newWord });
                 break;
         }
+        // Grant 30s activation perk
+        riftPerks[rift.type] = 30000;
     }
 
     (function loadFromHash() {
