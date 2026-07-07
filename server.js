@@ -56,6 +56,11 @@ wss.on('connection', (ws) => {
         broadcast({ type: 'glitchspeak', words: msg.words }, ws);
         break;
 
+      case 'reset':
+        serverStrokes = [];
+        broadcast({ type: 'reset' });
+        break;
+
       case 'ping':
         if (ws._id && users[ws._id]) {
           users[ws._id].lastSeen = Date.now();

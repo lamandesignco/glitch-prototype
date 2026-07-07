@@ -164,6 +164,8 @@
                         delete users[d.id];
                         updateUserCount();
                     }
+                } else if (d.type === 'reset') {
+                    strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
                 } else if (d.type === 'glitchspeak') {
                     for (let w of d.words) {
                         if (!glitchspeak.includes(w)) glitchspeak.push(w);
@@ -1030,6 +1032,7 @@
 
         if (key === 'r' || key === 'R') {
             strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
+            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'reset' }));
             return;
         }
         if (key === 's' || key === 'S') {
