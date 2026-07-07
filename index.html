@@ -59,6 +59,7 @@
     <div id="energy-bar"><div id="energy-fill"></div></div>
     <div id="mode-display">\u25C9 draw</div>
     <div id="voice-status" style="position:fixed;bottom:36px;right:20px;font-size:7px;pointer-events:none;font-family:'Courier New',monospace;color:rgba(200,180,220,0.2);letter-spacing:1px">voice: ...</div>
+    <div id="rift-notification" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);font-family:'Courier New',monospace;font-size:9px;letter-spacing:1px;color:rgba(200,180,220,0.7);pointer-events:none;z-index:50;opacity:0;transition:opacity 0.5s;text-align:center"></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
     // ─── Configuration ───────────────────────────────────────────────
@@ -183,6 +184,30 @@
     let resistanceTriggered = false;
     let resistanceTextTimer = 0;
 
+    // ─── Glitch Rifts ──────────────────────────────────────────────
+    let rifts = [];
+    let riftTraces = [];
+    let riftActiveAnim = null; // { x, y, type, timer }
+    let riftNotificationTimer = 0;
+
+    const RIFT_CONFIG = {
+        code:         { color: [68, 204, 221], label: 'C0d3 R1ft',   emoji: '~' },
+        ghost:        { color: [136, 68, 204], label: 'Gh0st R1ft',  emoji: '\u25C7' },
+        connection:   { color: [221, 204, 68], label: 'C0nn3ct R1ft',emoji: '\u2248' },
+        energy:       { color: [68, 221, 136], label: '3n3rgy R1ft', emoji: '\u2668' },
+        resistance:   { color: [221, 68, 68],  label: 'R3s1st R1ft', emoji: '\u2718' },
+        glitchspeak:  { color: [200, 200, 200],label: 'Gl1tchsp34k', emoji: '\u2733' }
+    };
+
+    function riftNearMouse() {
+        let gx = mouseX - scrollX, gy = mouseY - scrollY;
+        for (let r of rifts) {
+            if (r.activated) continue;
+            if (dist(r.x, r.y, gx, gy) < 100) return r;
+        }
+        return null;
+    }
+
     // ─── Narrative messages (resistance/energy) ──────────────────────
     let narrativeTexts = [];
 
@@ -254,6 +279,9 @@
                         if (strokes.length > CFG.maxStrokes) strokes.splice(0, strokes.length - CFG.maxStrokes);
                     }
                     updateUserCount();
+                    if (d.rifts) {
+                        rifts = d.rifts.map(r => ({ ...r }));
+                    }
                 } else if (d.type === 'stroke') {
                     let s = Stroke.deserialize(d.data);
                     if (s && !strokes.find(st => st.id === s.id)) {
@@ -273,12 +301,32 @@
                     }
                 } else if (d.type === 'reset') {
                     strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
-                    ghosts = []; regionDensity = {};
+                    ghosts = []; regionDensity = {}; rifts = []; riftTraces = [];
+                    if (d.rifts) { rifts = d.rifts.map(r => ({ ...r })); }
                 } else if (d.type === 'glitchspeak') {
                     for (let w of d.words) {
                         if (!glitchspeak.includes(w)) glitchspeak.push(w);
                     }
                     if (glitchspeak.length > 150) glitchspeak = glitchspeak.slice(-100);
+                } else if (d.type === 'rifts-sync') {
+                    let serverIds = d.rifts.map(r => r.id);
+                    rifts = rifts.filter(r => serverIds.includes(r.id));
+                    for (let sr of d.rifts) {
+                        let existing = rifts.find(r => r.id === sr.id);
+                        if (existing) { existing.activated = sr.activated; }
+                        else { rifts.push({ ...sr }); }
+                    }
+                } else if (d.type === 'rift-discovered') {
+                    let rift = rifts.find(r => r.id === d.rift.id);
+                    if (rift) rift.activated = true;
+                    let cfg = RIFT_CONFIG[d.rift.type];
+                    let label = cfg ? cfg.label : 'R1ft';
+                    let el = document.getElementById('rift-notification');
+                    if (el) {
+                        el.textContent = '\uD83C\uDF00 ' + label + ' d1sc0v3r3d at (' + Math.floor(d.rift.x) + ', ' + Math.floor(d.rift.y) + ')';
+                        el.style.opacity = '1';
+                        setTimeout(() => { if (el) el.style.opacity = '0'; }, 4000);
+                    }
                 }
             };
             socket.onclose = function(e) {
@@ -1550,6 +1598,21 @@
     function draw() {
         frameCounter++;
 
+        // ── Rift proximity shimmer ──
+        let nearRift = riftNearMouse();
+        if (nearRift && frameCounter % 3 === 0) {
+            let gx = mouseX - scrollX, gy = mouseY - scrollY;
+            let cfg = RIFT_CONFIG[nearRift.type];
+            let distStr = 0.15 + sin(frameCount * 0.05) * 0.1;
+            for (let gl of gridLines) gl.applyDisturbance(gx, gy, distStr);
+            if (cfg) {
+                noStroke();
+                let a = 20 + sin(frameCount * 0.06) * 10;
+                fill(cfg.color[0], cfg.color[1], cfg.color[2], a);
+                ellipse(mouseX, mouseY, 80 + sin(frameCount * 0.04) * 20, 80 + sin(frameCount * 0.04) * 20);
+            }
+        }
+
         if (frameCount < 5) {
             background(BASE.bg[0], BASE.bg[1], BASE.bg[2]);
         } else {
@@ -1956,6 +2019,87 @@
             text(nt.text, nt.x, nt.y + random(-1, 1));
         }
 
+        // ── Glitch Rift traces (secondary effects) ──
+        for (let i = riftTraces.length - 1; i >= 0; i--) {
+            let t = riftTraces[i];
+            t.life--;
+            if (t.life <= 0) { riftTraces.splice(i, 1); continue; }
+            let ta = map(t.life, 0, t.maxLife, 0, t.alpha);
+            let sx = t.x + scrollX, sy = t.y + scrollY;
+            if (sx < -60 || sx > width + 60 || sy < -60 || sy > height + 60) continue;
+            switch (t.type) {
+                case 'code':
+                    noStroke();
+                    fill(68, 204, 221, ta * 0.5);
+                    textFont('Courier New');
+                    textSize(5 + sin(frameCount * 0.05 + t.x) * 1);
+                    text(t.data || getSystemReveal(), sx + random(-15, 15), sy + random(-15, 15));
+                    break;
+                case 'ghost':
+                    noStroke();
+                    fill(136, 68, 204, ta * 0.3);
+                    ellipse(sx + random(-10, 10), sy + random(-10, 10), 2, 2);
+                    break;
+                case 'connection':
+                    stroke(221, 204, 68, ta * 0.3);
+                    strokeWeight(0.3);
+                    for (let j = 0; j < 4; j++) {
+                        let ax = sx + cos(j * HALF_PI + t.x) * 15;
+                        let ay = sy + sin(j * HALF_PI + t.x) * 15;
+                        line(sx, sy, ax, ay);
+                    }
+                    break;
+                case 'energy':
+                    noStroke();
+                    fill(68, 221, 136, ta * 0.4);
+                    ellipse(sx, sy, 6 + sin(frameCount * 0.03 + t.x) * 3, 6 + sin(frameCount * 0.03 + t.x) * 3);
+                    break;
+                case 'resistance':
+                    stroke(221, 68, 68, ta * 0.4);
+                    strokeWeight(0.5);
+                    for (let j = 0; j < 3; j++) {
+                        let ax = sx + random(-20, 20), ay = sy + random(-20, 20);
+                        line(sx, sy, ax, ay);
+                    }
+                    break;
+                case 'glitchspeak':
+                    noStroke();
+                    fill(200, 200, 200, ta * 0.6);
+                    textFont('Courier New');
+                    textSize(6);
+                    textAlign(CENTER, CENTER);
+                    text(t.data || generateGlitchspeak(), sx, sy);
+                    break;
+            }
+        }
+
+        // ── Glitch Rifts (active, undiscovered) ──
+        for (let rift of rifts) {
+            if (rift.activated) continue;
+            let sx = rift.x + scrollX, sy = rift.y + scrollY;
+            if (sx < -60 || sx > width + 60 || sy < -60 || sy > height + 60) continue;
+            renderRift(sx, sy, rift);
+        }
+
+        // ── Rift activation animation ──
+        if (riftActiveAnim) {
+            riftActiveAnim.timer--;
+            let pct = 1 - riftActiveAnim.timer / riftActiveAnim.maxTimer;
+            let cfg = RIFT_CONFIG[riftActiveAnim.type];
+            if (cfg) {
+                noStroke();
+                let r = 10 + pct * 80;
+                let a = (1 - pct) * 150;
+                fill(cfg.color[0], cfg.color[1], cfg.color[2], a);
+                ellipse(riftActiveAnim.x + scrollX, riftActiveAnim.y + scrollY, r, r);
+                if (pct > 0.3) {
+                    fill(cfg.color[0], cfg.color[1], cfg.color[2], a * 0.3);
+                    ellipse(riftActiveAnim.x + scrollX, riftActiveAnim.y + scrollY, r * 1.5, r * 1.5);
+                }
+            }
+            if (riftActiveAnim.timer <= 0) riftActiveAnim = null;
+        }
+
         pop(); // End screen-shake transform
 
         // ── Sound visualization (voice as generative force) ──
@@ -2023,6 +2167,15 @@
         if (!voiceReady) startVoice();
 
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
+
+        // ── Glitch Rift click detection ──
+        for (let rift of rifts) {
+            if (rift.activated) continue;
+            if (dist(rift.x, rift.y, gx, gy) < 30) {
+                activateRift(rift);
+                return;
+            }
+        }
 
         if (currentMode === MODES.DRAW) {
             shockwaves.push(new Shockwave(gx, gy));
@@ -2455,6 +2608,265 @@
             window.location.hash = compressed;
             if (navigator.clipboard) navigator.clipboard.writeText(window.location.href).catch(() => {});
         } catch (e) {}
+    }
+
+    // ─── Glitch Rift Functions ─────────────────────────────────────
+
+    function renderRift(sx, sy, rift) {
+        let cfg = RIFT_CONFIG[rift.type];
+        if (!cfg) return;
+        let c = cfg.color;
+        let pulse = 0.6 + sin(frameCount * 0.025 + rift.id.length) * 0.4;
+        let baseR = 8 + pulse * 5;
+
+        switch (rift.type) {
+            case 'code':
+                // Cyan tear with code fragment glow
+                noStroke();
+                fill(c[0], c[1], c[2], 25 * pulse);
+                ellipse(sx, sy, baseR * 4, baseR * 4);
+                fill(c[0], c[1], c[2], 80 * pulse);
+                ellipse(sx, sy, baseR * 1.5, baseR * 1.5);
+                fill(c[0], c[1], c[2], 120 * pulse);
+                textFont('Courier New');
+                textSize(6 + pulse * 2);
+                textAlign(CENTER, CENTER);
+                text('{ }', sx, sy);
+                break;
+            case 'ghost':
+                // Purple shimmer
+                noStroke();
+                fill(c[0], c[1], c[2], 20 * pulse);
+                ellipse(sx, sy, baseR * 4.5, baseR * 4.5);
+                fill(c[0], c[1], c[2], 60 * pulse);
+                ellipse(sx, sy, baseR * 1.8, baseR * 1.8);
+                fill(c[0], c[1], c[2], 100 * pulse);
+                ellipse(sx, sy, baseR * 0.8, baseR * 0.8);
+                // Drifting ghost dots
+                for (let i = 0; i < 3; i++) {
+                    let a = frameCount * 0.02 + i * 2.1;
+                    let dx = cos(a) * baseR * 1.2;
+                    let dy = sin(a) * baseR * 1.2;
+                    fill(c[0], c[1], c[2], 40 * pulse);
+                    ellipse(sx + dx, sy + dy, 2, 2);
+                }
+                break;
+            case 'connection':
+                // Gold lines to nearby strokes/users (symbolic)
+                noStroke();
+                fill(c[0], c[1], c[2], 20 * pulse);
+                ellipse(sx, sy, baseR * 4, baseR * 4);
+                fill(c[0], c[1], c[2], 70 * pulse);
+                ellipse(sx, sy, baseR * 1.3, baseR * 1.3);
+                stroke(c[0], c[1], c[2], 40 * pulse);
+                strokeWeight(0.5);
+                for (let i = 0; i < 5; i++) {
+                    let a = frameCount * 0.01 + i * 1.26;
+                    let r = baseR * 1.8 + sin(frameCount * 0.03 + i) * 5;
+                    line(sx, sy, sx + cos(a) * r, sy + sin(a) * r);
+                }
+                break;
+            case 'energy':
+                // Green pulsing glow
+                noStroke();
+                fill(c[0], c[1], c[2], 30 * pulse);
+                ellipse(sx, sy, baseR * 4, baseR * 4);
+                fill(c[0], c[1], c[2], 80 * pulse);
+                ellipse(sx, sy, baseR * 1.6, baseR * 1.6);
+                fill(c[0], c[1], c[2], 150 * pulse);
+                ellipse(sx, sy, baseR * 0.6, baseR * 0.6);
+                stroke(c[0], c[1], c[2], 60 * pulse);
+                strokeWeight(0.6);
+                for (let i = 0; i < 3; i++) {
+                    let a = frameCount * 0.03 + i * 2.1;
+                    let r = baseR * 1.5 + sin(frameCount * 0.06 + i) * 3;
+                    line(sx + cos(a) * r * 0.5, sy + sin(a) * r * 0.5,
+                         sx + cos(a) * r, sy + sin(a) * r);
+                }
+                break;
+            case 'resistance':
+                // Red chaotic distortion
+                noStroke();
+                fill(c[0], c[1], c[2], 20 * pulse);
+                ellipse(sx, sy, baseR * 5, baseR * 5);
+                fill(c[0], c[1], c[2], 60 * pulse);
+                ellipse(sx, sy, baseR * 2, baseR * 2);
+                stroke(c[0], c[1], c[2], 80 * pulse);
+                strokeWeight(0.8);
+                for (let i = 0; i < 6; i++) {
+                    let a = random(TWO_PI);
+                    let r = baseR * (0.5 + random() * 1.5);
+                    line(sx, sy, sx + cos(a) * r, sy + sin(a) * r);
+                }
+                break;
+            case 'glitchspeak':
+                // White letter vortex
+                noStroke();
+                fill(c[0], c[1], c[2], 15 * pulse);
+                ellipse(sx, sy, baseR * 4, baseR * 4);
+                fill(c[0], c[1], c[2], 50 * pulse);
+                ellipse(sx, sy, baseR * 1.5, baseR * 1.5);
+                textFont('Courier New');
+                textAlign(CENTER, CENTER);
+                let chars = 'abcdefghijklmnopqrstuvwxyz';
+                for (let i = 0; i < 5; i++) {
+                    let a = frameCount * 0.02 + i * 1.26;
+                    let r = baseR * 1.8 + sin(frameCount * 0.04 + i * 2) * 4;
+                    let ch = chars[Math.floor(Math.random() * chars.length)];
+                    fill(c[0], c[1], c[2], 40 * pulse + Math.random() * 30);
+                    textSize(4 + pulse * 2);
+                    text(ch, sx + cos(a) * r, sy + sin(a) * r);
+                }
+                break;
+        }
+    }
+
+    function activateRift(rift) {
+        if (rift.activated) return;
+
+        // Send discovery to server
+        if (socket && wsConnected) {
+            socket.send(JSON.stringify({ type: 'rift-discover', riftId: rift.id, userId: me.id }));
+        }
+
+        // Start activation animation
+        riftActiveAnim = { x: rift.x, y: rift.y, type: rift.type, timer: 30, maxTimer: 30 };
+        rift.activated = true;
+
+        let cfg = RIFT_CONFIG[rift.type];
+        let sx = rift.x + scrollX, sy = rift.y + scrollY;
+        let c = cfg ? cfg.color : [200, 180, 220];
+
+        switch (rift.type) {
+            case 'code':
+                // Primary: reveal code fragments for 5-10 seconds
+                for (let i = 0; i < 12; i++) {
+                    let rx = rift.x + random(-80, 80);
+                    let ry = rift.y + random(-80, 80);
+                    createNoiseText(rx, ry, getSystemReveal(), 'rift');
+                }
+                // Secondary: code trace remains
+                riftTraces.push({ type: 'code', x: rift.x, y: rift.y, life: 300, maxLife: 300, alpha: 80, data: null });
+                // Particle burst
+                for (let i = 0; i < 20; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 3), sin(ang) * random(1, 3),
+                        20 + floor(random(20)), random(1, 3), [68, 204, 221]));
+                }
+                break;
+
+            case 'ghost':
+                // Primary: flare all ghosts within radius
+                for (let g of ghosts) {
+                    if (g.points.length === 0) continue;
+                    let mid = g.points[floor(g.points.length / 2)];
+                    if (mid && dist(mid.x, mid.y, rift.x, rift.y) < 200) {
+                        g.flaring = true;
+                        g.flareDuration = max(g.flareDuration || 0, 60 + floor(random(60)));
+                    }
+                }
+                // Secondary: ghost trace
+                riftTraces.push({ type: 'ghost', x: rift.x, y: rift.y, life: 600, maxLife: 600, alpha: 50, data: null });
+                // Ghostly particles
+                for (let i = 0; i < 15; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 2), sin(ang) * random(0.5, 2),
+                        30 + floor(random(30)), random(1, 2), [136, 68, 204]));
+                }
+                break;
+
+            case 'connection':
+                // Primary: show user network briefly (nodes + lines)
+                let uids = Object.keys(users);
+                for (let i = 0; i < uids.length && i < 8; i++) {
+                    let uid = uids[i];
+                    let u = users[uid];
+                    if (!u) continue;
+                    let ux = rift.x + random(-100, 100);
+                    let uy = rift.y + random(-100, 100);
+                    stroke(221, 204, 68, 60);
+                    strokeWeight(0.5);
+                    line(sx, sy, ux, uy);
+                    noStroke();
+                    fill(221, 204, 68, 80);
+                    ellipse(ux, uy, 4, 4);
+                }
+                // Secondary: connection trace
+                riftTraces.push({ type: 'connection', x: rift.x, y: rift.y, life: 400, maxLife: 400, alpha: 60, data: null });
+                break;
+
+            case 'energy':
+                // Primary: restore energy + pulse
+                energy = min(100, energy + 50);
+                // Also affect nearby ghosts (energize)
+                for (let g of ghosts) {
+                    if (g.points.length === 0) continue;
+                    let mid = g.points[floor(g.points.length / 2)];
+                    if (mid && dist(mid.x, mid.y, rift.x, rift.y) < 150) {
+                        g.flaring = true;
+                        g.flareDuration = max(g.flareDuration || 0, 20);
+                    }
+                }
+                // Secondary: energy trace
+                riftTraces.push({ type: 'energy', x: rift.x, y: rift.y, life: 500, maxLife: 500, alpha: 60, data: null });
+                // Green particles
+                for (let i = 0; i < 25; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 4), sin(ang) * random(1, 4),
+                        15 + floor(random(20)), random(1, 3), [68, 221, 136]));
+                }
+                // Broadcast energy to all users via notification
+                break;
+
+            case 'resistance':
+                // Primary: grid fights back in the area
+                for (let gl of gridLines) gl.applyDisturbance(rift.x, rift.y, 1.0);
+                // Distort nearby strokes
+                for (let s of strokes) {
+                    for (let pt of s.points) {
+                        if (dist(pt.x, pt.y, rift.x, rift.y) < 150) {
+                            pt.x += random(-30, 30);
+                            pt.y += random(-30, 30);
+                        }
+                    }
+                }
+                // Create a shockwave
+                let sw = new Shockwave(rift.x, rift.y);
+                sw.maxRadius = 250;
+                sw.life = 40;
+                sw.maxLife = 40;
+                shockwaves.push(sw);
+                // Secondary: resistance scar
+                riftTraces.push({ type: 'resistance', x: rift.x, y: rift.y, life: 800, maxLife: 800, alpha: 70, data: null });
+                // Red particles
+                for (let i = 0; i < 20; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(1, 5), sin(ang) * random(1, 5),
+                        20 + floor(random(20)), random(1, 4), [221, 68, 68]));
+                }
+                break;
+
+            case 'glitchspeak':
+                // Primary: new word emerges
+                let seeds = ['d1sturb4nc3', '3ncrypt10n', 'r3fus4l', 'p4l1mp53st', 'gh0st1ng', 'fr4ctur3', 'm4nf3st0', 'd3c0d3'];
+                let word = seeds[Math.floor(Math.random() * seeds.length)];
+                if (!glitchspeak.includes(word)) {
+                    glitchspeak.push(word);
+                    if (socket && wsConnected) {
+                        socket.send(JSON.stringify({ type: 'glitchspeak', words: [word] }));
+                    }
+                }
+                createNoiseText(rift.x, rift.y, '\u2733 ' + word + ' \u2733', 'rift');
+                // Secondary: floating text trace
+                riftTraces.push({ type: 'glitchspeak', x: rift.x, y: rift.y, life: 400, maxLife: 400, alpha: 80, data: word });
+                // White particles
+                for (let i = 0; i < 15; i++) {
+                    let ang = random(TWO_PI);
+                    particles.push(new Particle(sx, sy, cos(ang) * random(0.5, 2.5), sin(ang) * random(0.5, 2.5),
+                        20 + floor(random(20)), random(1, 2), [200, 200, 200]));
+                }
+                break;
+        }
     }
 
     (function loadFromHash() {
