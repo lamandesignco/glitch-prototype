@@ -10,7 +10,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-const STROKE_MS = 120000;
+const STROKE_MS = 60000;
 const MAX_SERVER_STROKES = 500;
 const MAX_PARTICLES = 5000;
 
@@ -22,12 +22,15 @@ let serverParticles = [];
 function generateParticles(stroke) {
   let points = stroke.points || [];
   if (points.length === 0) return [];
-  let num = 2 + Math.floor(Math.random() * 9); // 2–10
+  let num = 2 + Math.floor(Math.random() * 9);
   let col = stroke.params ? (stroke.params.color || [200, 180, 220]) : [200, 180, 220];
   let types = ['dot', 'fragment', 'spark', 'memory'];
   let particles = [];
+  // Sample from the LAST points (where the drawing ended)
+  let poolSize = Math.min(points.length, num * 3);
+  let startIdx = points.length - poolSize;
   for (let i = 0; i < num; i++) {
-    let idx = Math.floor(Math.random() * points.length);
+    let idx = startIdx + Math.floor(Math.random() * poolSize);
     let p = points[idx];
     particles.push({
       id: 'particle_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),

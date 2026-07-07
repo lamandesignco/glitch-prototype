@@ -126,10 +126,17 @@
     let currentStroke = null;
     let voiceReady = false;
 
+    // ─── Persistent region (sound ghosting) ──────────────────────────
+    let persistentBuffer = null;
+    let currentRect = null;
+    let rectActive = false;
+    let lastRectTime = 0;
+    let rectInterval = 1500;
+
     // ─── Disintegration timeline ────────────────────────────────────
-    const STROKE_MS = 120000;      // 120s total lifetime
-    const PH2_MS  = 60000;         // Phase 2 starts at 60s
-    const PH3_MS  = 90000;         // Phase 3 starts at 90s
+    const STROKE_MS = 60000;       // 60s total lifetime
+    const PH2_MS  = 30000;         // Phase 2 starts at 30s
+    const PH3_MS  = 45000;         // Phase 3 starts at 45s
     function strokePhase(s) {
         let a = Date.now() - s.birth;
         if (a >= STROKE_MS) return 4;
@@ -167,7 +174,7 @@
     let currentStrokeType = STROKE_TYPES.DATA;
 
     // ─── Energy ──────────────────────────────────────────────────────
-    let energy = parseInt(localStorage.getItem('glitchDriftEnergy')) || 25;
+    let energy = 25;
 
     // ─── Region density (claiming resistance) ────────────────────────
     const REGION_SIZE = 200;
@@ -385,7 +392,6 @@
                 } else if (d.type === 'energy-grant') {
                     try {
                         energy = min(25, energy + d.amount);
-                        localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                         showNotification('\u26A1 +' + d.amount + ' 3n3rgy (r1ft sh4r3d)', 3000);
                     } catch(e) { console.warn('energy-grant err', e); }
                 }
@@ -1691,7 +1697,6 @@
         // 5. Energy consumption (voice as labor)
         let energyCost = volume * 2 + wordCount * 0.1;
         energy = max(0, energy - energyCost);
-        localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
 
         // 6. Generate voice marks using current stroke type (queued for draw loop)
         let markCount = min(wordCount * 2 + floor(density), 20);
@@ -1750,6 +1755,7 @@
     // ─── p5: setup ──────────────────────────────────────────────────
     function setup() {
         createCanvas(windowWidth, windowHeight);
+        persistentBuffer = createGraphics(windowWidth, windowHeight);
         pixelDensity(1);
         colorMode(RGB);
         textFont('Courier New');
@@ -1787,12 +1793,24 @@
             }
         }
 
+        // ─── Save persistent region buffer (before fade) ───
+        if (rectActive && currentRect && persistentBuffer) {
+            let ctx = persistentBuffer.drawingContext;
+            ctx.drawImage(drawingContext.canvas, 0, 0);
+        }
+
         if (frameCount < 5) {
             background(BASE.bg[0], BASE.bg[1], BASE.bg[2]);
         } else {
             noStroke();
             fill(BASE.bg[0], BASE.bg[1], BASE.bg[2], 16);
             rect(0, 0, width, height);
+        }
+        // ─── Restore persistent region (undo fade inside rect) ───
+        if (rectActive && currentRect && persistentBuffer) {
+            let r = currentRect;
+            drawingContext.drawImage(persistentBuffer.drawingContext.canvas,
+                r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
         }
 
         // ─── Voice status UI ───
@@ -1816,9 +1834,6 @@
         energy += 0.005;
         if (energy > 25) energy = 25;
         if (energy < 0) energy = 0;
-        if (frameCounter % 10 === 0) {
-            localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
-        }
 
         // ─── Continuous voice detection + generative effects ───
         getVolume();
@@ -1833,7 +1848,6 @@
             // Energy drain (voice as labor)
             let energyCost = vol * 2;
             energy = max(0, energy - energyCost * 0.02);
-            if (frameCounter % 60 === 0) localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
 
             // Grid disturbance (voice as resistance) — every 6 frames
             if (frameCounter % 6 === 0) {
@@ -2618,11 +2632,51 @@
                 text(corruptText(word, 0.5), tx, ty);
             }
         }
+        // ─── Update sound-activated persistent regions ───
+        updateSoundRect();
+    }
+
+    // ─── Sound-activated persistent region ──────────────────────────
+    function updateSoundRect() {
+        let vol = voiceVolumeSmooth;
+        let threshold = 0.1;
+        let now = millis();
+
+        // Expire current rect
+        if (rectActive && currentRect) {
+            if (now - currentRect.birthTime > currentRect.duration) {
+                rectActive = false;
+                currentRect = null;
+            }
+        }
+
+        // Create new rect if sound is loud enough
+        if (vol > threshold && !rectActive) {
+            if (now - lastRectTime > rectInterval) {
+                let w = constrain(map(vol, threshold, 1.0, 10, 400), 10, 400);
+                let h = constrain(map(vol, threshold, 1.0, 10, 300), 10, 300);
+                currentRect = {
+                    x: mouseX - w / 2,
+                    y: mouseY - h / 2,
+                    w: w,
+                    h: h,
+                    birthTime: now,
+                    duration: random(1000, 2000)
+                };
+                rectActive = true;
+                rectInterval = random(1000, 3000);
+                lastRectTime = now;
+                energy = max(0, energy - 0.5);
+            }
+        }
     }
 
     // ─── Resize ──────────────────────────────────────────────────────
     function windowResized() {
         resizeCanvas(windowWidth, windowHeight);
+        if (persistentBuffer) persistentBuffer.remove();
+        persistentBuffer = createGraphics(windowWidth, windowHeight);
+        rectActive = false; currentRect = null;
         initGrid();
     }
 
@@ -2820,7 +2874,6 @@
                 if (!last || dist(cx, cy, last.x, last.y) > 8) {
                     currentStroke.addPoint(cx, cy);
                     energy -= dist(cx, cy, last.x, last.y) * 2; if (energy < 0) energy = 0;
-                    localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                 }
                 // Draw corrupted copy preview
                 noStroke();
@@ -3066,6 +3119,7 @@
         if (key === 'r') {
             strokes = []; noiseTexts = []; particles = []; shockwaves = []; archive = [];
             ghosts = []; regionDensity = {}; remnants = []; connections = [];
+            energy = 25;
             if (socket && socket.readyState === 1) socket.send(JSON.stringify({ type: 'reset' }));
             return false;
         }
@@ -3321,7 +3375,6 @@
                 // A green pulse wave expands — restoring energy
                 pulseWaves.push({ x: rift.x, y: rift.y, radius: 0, maxRadius: 300, life: 35, maxLife: 35, hitUser: false });
                 energy = min(25, energy + 30);
-                localStorage.setItem('glitchDriftEnergy', String(Math.floor(energy)));
                 // Energize nearby ghosts
                 for (let g of ghosts) {
                     if (g.points.length === 0) continue;
