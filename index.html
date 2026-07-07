@@ -8,57 +8,9 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { background: #0a0810; overflow: hidden; font-family: 'Courier New', monospace; }
         canvas { display: block; cursor: crosshair; }
-        #info {
-            position: fixed; bottom: 20px; left: 20px; right: 20px;
-            color: rgba(200, 180, 220, 0.35);
-            font-size: 10px; pointer-events: none; line-height: 1.6;
-            letter-spacing: 0.5px; user-select: none;
-            display: flex; justify-content: space-between;
-        }
-        #info .left { text-align: left; }
-        #info .right { text-align: right; }
-        #status {
-            position: fixed; top: 20px; right: 20px;
-            color: rgba(200, 180, 220, 0.25);
-            font-size: 9px; pointer-events: none; text-align: right;
-            line-height: 1.5; letter-spacing: 0.3px;
-            transition: color 0.3s;
-        }
-        #energy-bar {
-            position: fixed; bottom: 50px; left: 20px;
-            width: 120px; height: 4px;
-            background: rgba(200, 180, 220, 0.1);
-            border: 1px solid rgba(200, 180, 220, 0.15);
-            pointer-events: none;
-        }
-        #energy-fill {
-            height: 100%;
-            width: 100%;
-            background: rgba(200, 180, 220, 0.4);
-            transition: width 0.3s;
-        }
-        #energy-label {
-            position: fixed; bottom: 56px; left: 20px;
-            color: rgba(200, 180, 220, 0.25);
-            font-size: 8px; pointer-events: none; font-family: 'Courier New', monospace;
-        }
-        #mode-display {
-            position: fixed; bottom: 20px; right: 20px;
-            font-size: 11px; pointer-events: none; font-family: 'Courier New', monospace;
-            letter-spacing: 2px; text-transform: uppercase;
-        }
     </style>
 </head>
 <body>
-    <div id="info">
-        <div class="left">~ <span id="userLabel">drift</span> ~</div>
-        <div class="right">click-drag · type · speak · <span id="userCount">1</span> here</div>
-    </div>
-    <div id="status"></div>
-    <div id="energy-label">gl1tch 3n3rgy</div>
-    <div id="energy-bar"><div id="energy-fill"></div></div>
-    <div id="mode-display">\u25C9 draw</div>
-    <div id="voice-status" style="position:fixed;bottom:36px;right:20px;font-size:7px;pointer-events:none;font-family:'Courier New',monospace;color:rgba(200,180,220,0.2);letter-spacing:1px">voice: ...</div>
     <div id="rift-notification" style="position:fixed;top:20px;left:50%;transform:translateX(-50%);font-family:'Courier New',monospace;font-size:9px;letter-spacing:1px;color:rgba(200,180,220,0.7);pointer-events:none;z-index:50;opacity:0;transition:opacity 0.5s;text-align:center"></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
@@ -258,12 +210,6 @@
 
     // ─── Mode display ────────────────────────────────────────────────
     function updateModeDisplay() {
-        let el = document.getElementById('mode-display');
-        if (!el) return;
-        let symbols = { draw: '\u25C9', refuse: '\u2718', haunt: '\u25C7', speak: '\u266B', glitch: '\u2206', echo: '\u2248', erase: '\u2717' };
-        let typeLabel = STROKE_TYPE_LABELS[currentStrokeType] || 'd4ta';
-        el.innerHTML = (symbols[currentMode] || '\u25C9') + ' ' + currentMode + ' <span style="color:' + (STROKE_TYPE_COLORS[currentStrokeType] || 'rgba(200,180,220,0.6)') + ';opacity:0.5">[' + typeLabel + ']</span>';
-        el.style.color = MODE_COLORS[currentMode] || 'rgba(200,180,220,0.6)';
     }
 
     // ─── WebSocket (multi-user sync) ────────────────────────────────
@@ -449,21 +395,14 @@
     }
 
     function updateStatus() {
-        let statusEl = document.getElementById('status');
-        let parts = [];
-        if (!wsConnected) parts.push('\u26A0 ' + (wsRetryCount > 0 ? 'reconnecting' : 'offline'));
-        if (wsConnected && wsRetryCount > 0) parts.push('reconnected');
-        let names = Object.keys(users).filter(u => u !== me.id);
-        if (names.length > 0) parts.push('others: ' + names.slice(0, 4).join(', ') + (names.length > 4 ? ' +' + (names.length - 4) : ''));
-        statusEl.textContent = parts.join(' \u00B7 ');
-        statusEl.style.color = wsConnected ? 'rgba(200,180,220,0.25)' : 'rgba(200,80,80,0.5)';
     }
 
     function updateUserCount() {
         let count = Object.keys(users).length;
-        document.getElementById('userCount').textContent = count;
-        document.getElementById('userLabel').textContent = me.id;
-        updateStatus();
+        let uc = document.getElementById('userCount');
+        let ul = document.getElementById('userLabel');
+        if (uc) uc.textContent = count;
+        if (ul) ul.textContent = me.id;
     }
 
     // ─── Glitchspeak ─────────────────────────────────────────────────
@@ -1976,7 +1915,8 @@
             if (dist(pw.x, pw.y, gx, gy) < pw.radius && !pw.hitUser) {
                 pw.hitUser = true;
                 energy = min(25, energy + 30);
-                document.getElementById('energy-fill').style.width = energy + '%';
+                let ef = document.getElementById('energy-fill');
+                if (ef) ef.style.width = energy + '%';
             }
             // Make strokes glow green within wave
             for (let s of strokes) {
@@ -2670,7 +2610,7 @@
                     duration: 60000
                 };
                 rectActive = true;
-                rectInterval = random(1000, 3000);
+                rectInterval = constrain(map(vol, threshold, 1.0, 3000, 200), 200, 3000);
                 lastRectTime = now;
                 energy = max(0, energy - 0.5);
             }
