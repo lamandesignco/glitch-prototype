@@ -86,6 +86,7 @@
 
     let scrollX = (Math.random() - 0.5) * GRID_EXTENT * 2;
     let scrollY = (Math.random() - 0.5) * GRID_EXTENT * 2;
+    let screenShakeX = 0, screenShakeY = 0;
 
     // ─── User Parameters (unique per session) ────────────────────────
     function generateUser() {
@@ -613,6 +614,8 @@
                 if (voidInstability > 0.4) {
                     // Voice boost: loud speaking during void amazes the transformation
                     let voiceBoost = (voiceActive && frameCount - lastVoiceTime < 30) ? 1 + voiceVolumeSmooth * 2 : 1;
+                    // Store on stroke so transformation uses it later
+                    this.voiceVoidBoost = voiceBoost;
                     let jitterMag = (12 + voiceBoost * 20) * voidInstability;
                     let fillRate = voidInstability * 0.9 * voiceBoost;
                     for (let pt of this.points) {
@@ -639,22 +642,57 @@
                             text(getSystemReveal(), mid.x + scrollX + random(-20, 20), mid.y + scrollY + random(-20, 20));
                         }
                     }
-                    // Voice boost indicator
-                    if (voiceBoost > 1.5 && Math.random() < voidInstability * 0.1) {
+                    // Voice boost indicator — always visible when boost is active
+                    if (voiceBoost > 1.5) {
                         let mid = this.points[floor(this.points.length / 2)];
                         if (mid) {
-                            fill(200, 120, 255, 80);
+                            let px = mid.x + scrollX;
+                            let py = mid.y + scrollY;
+                            // Pulsing background glow
                             noStroke();
+                            let glowR = 40 + sin(frameCount * 0.08) * 12;
+                            fill(120, 60, 200, 30 + sin(frameCount * 0.06) * 15);
+                            ellipse(px, py, glowR, glowR);
+                            // Bright prominent text
+                            fill(220, 140, 255, 160 + sin(frameCount * 0.1) * 60);
                             textFont('Courier New');
-                            textSize(8);
+                            textSize(16 + sin(frameCount * 0.07) * 3);
                             textAlign(CENTER, CENTER);
-                            text('\u266B v01c3 4mpl1f13d', mid.x + scrollX + random(-10, 10), mid.y + scrollY + random(-10, 10));
+                            text('\u266B v01c3 4mpl1f13d', px + sin(frameCount * 0.05) * 4, py - 8 + cos(frameCount * 0.04) * 4);
+                            // Sub-label showing boost multiplier
+                            fill(200, 120, 255, 100 + sin(frameCount * 0.08) * 40);
+                            textSize(7);
+                            text('x' + voiceBoost.toFixed(1) + ' 4mpl1fy', px, py + 18);
+                        }
+                        // Screen shake proportional to volume
+                        screenShakeX += random(-voiceVolumeSmooth * 6, voiceVolumeSmooth * 6);
+                        screenShakeY += random(-voiceVolumeSmooth * 6, voiceVolumeSmooth * 6);
+                        // Full-screen bright flash
+                        noStroke();
+                        fill(180, 120, 255, 20 + voiceVolumeSmooth * 30);
+                        rect(0, 0, width, height);
+                        // Particle burst from stroke center
+                        if (Math.random() < 0.3) {
+                            let mid = this.points[floor(this.points.length / 2)];
+                            if (mid) {
+                                for (let i = 0; i < 3 + floor(voiceVolumeSmooth * 5); i++) {
+                                    let ang = random(TWO_PI);
+                                    let spd = 1 + voiceVolumeSmooth * 3;
+                                    particles.push(new Particle(
+                                        mid.x + scrollX + random(-5, 5), mid.y + scrollY + random(-5, 5),
+                                        cos(ang) * spd, sin(ang) * spd,
+                                        12 + floor(voiceVolumeSmooth * 20), random(1, 4),
+                                        [200 + random(-40, 40), 120 + random(-40, 40), 255]
+                                    ));
+                                }
+                            }
                         }
                     }
                     return;
                 }
                 // Late void: noise mixed with emerging stroke
                 let lateVoiceBoost = (voiceActive && frameCount - lastVoiceTime < 30) ? 1 + voiceVolumeSmooth * 1.5 : 1;
+                this.voiceVoidBoost = lateVoiceBoost;
                 for (let pt of this.points) {
                     if (Math.random() < (1 - voidInstability) * 0.5 * lateVoiceBoost) {
                         noStroke();
@@ -662,9 +700,9 @@
                         rect(pt.x + scrollX + random(-8 * lateVoiceBoost, 8 * lateVoiceBoost), pt.y + scrollY + random(-8 * lateVoiceBoost, 8 * lateVoiceBoost), random(1, 3 * lateVoiceBoost), random(1, 3 * lateVoiceBoost));
                     }
                 }
-                // Show transformation type emerging
+                // Show transformation type emerging (always visible when voice loud)
                 let mid = this.points[floor(this.points.length / 2)];
-                if (mid && Math.random() < (1 - voidInstability) * 0.15 * lateVoiceBoost) {
+                if (mid && (Math.random() < (1 - voidInstability) * 0.15 * lateVoiceBoost || (lateVoiceBoost > 1.5 && Math.random() < 0.4))) {
                     let metricsLabel = '';
                     let avgSpd = constrain(this._totalLength / max(1, this.points.length), 0, 30);
                     let spdLabel = avgSpd > 12 ? 'fast' : avgSpd > 5 ? 'medium' : 'slow';
@@ -672,14 +710,22 @@
                     let dirLabel = this._directionChanges > 5 ? 'erratic' : 'steady';
                     metricsLabel = spdLabel + ' \u00B7 ' + lenLabel + ' \u00B7 ' + dirLabel;
                     let tLabel = this.voidState ? this.voidState.transformation : '?';
-                    fill(200, 180, 220, (1 - voidInstability) * 80);
+                    let lateAlpha = lateVoiceBoost > 1.5 ? 120 + sin(frameCount * 0.08) * 40 : (1 - voidInstability) * 80;
+                    fill(200, 180, 220, lateAlpha);
                     noStroke();
                     textFont('Courier New');
-                    textSize(6);
+                    textSize(lateVoiceBoost > 1.5 ? 8 : 6);
                     textAlign(CENTER, CENTER);
-                    text('\u2192 ' + tLabel.toUpperCase(), mid.x + scrollX, mid.y + scrollY + 20);
-                    fill(180, 160, 200, (1 - voidInstability) * 40);
+                    text('\u2192 ' + tLabel.toUpperCase() + (lateVoiceBoost > 1.5 ? ' \u266B' : ''), mid.x + scrollX, mid.y + scrollY + 20);
+                    fill(180, 160, 200, lateAlpha * 0.5);
+                    textSize(lateVoiceBoost > 1.5 ? 7 : 6);
                     text(metricsLabel, mid.x + scrollX, mid.y + scrollY + 30);
+                }
+                // Voice boost glow in late void
+                if (lateVoiceBoost > 1.5 && mid) {
+                    noStroke();
+                    fill(180, 120, 255, 20 + sin(frameCount * 0.06) * 10);
+                    ellipse(mid.x + scrollX, mid.y + scrollY, 30 + lateVoiceBoost * 10, 30 + lateVoiceBoost * 10);
                 }
             }
 
@@ -1763,13 +1809,41 @@
             try { localStorage.setItem('glitchDriftState', JSON.stringify({ glitchspeak: glitchspeak.slice(-50) })); } catch (e) {}
         }
 
+        // ─── Screen shake decay ───
+        screenShakeX *= 0.85;
+        screenShakeY *= 0.85;
+
         // ─── Render ───
+        push();
+        translate(screenShakeX, screenShakeY);
         for (let gl of gridLines) gl.display();
         for (let al of archive) al.display();
         for (let g of ghosts) g.display();
         for (let s of strokes) s.display();
-        for (let nt of noiseTexts) nt.display();
-        for (let sw of shockwaves) sw.display();
+
+        // ── Voice energy beam to void strokes ──
+        if (voiceActive && frameCount - lastVoiceTime < 30) {
+            for (let s of strokes) {
+                if (s.voiceVoidBoost && s.voiceVoidBoost > 1) {
+                    let mid = s.points[floor(s.points.length / 2)];
+                    if (mid) {
+                        let mx = mid.x + scrollX;
+                        let my = mid.y + scrollY;
+                        stroke(200, 120, 255, 60 + sin(frameCount * 0.2) * 30);
+                        strokeWeight(1 + voiceVolumeSmooth * 2);
+                        for (let i = 0; i < 8; i++) {
+                            let t = i / 8 + sin(frameCount * 0.05 + i) * 0.05;
+                            let bx = lerp(mouseX, mx, t) + random(-4, 4);
+                            let by = lerp(mouseY, my, t) + random(-4, 4);
+                            let bw = 1 + voiceVolumeSmooth * 3;
+                            noStroke();
+                            fill(200, 120, 255, 40 + sin(frameCount * 0.1 + i) * 20);
+                            ellipse(bx, by, bw, bw);
+                        }
+                    }
+                }
+            }
+        }
         for (let p of particles) {
             let pa = p.alpha;
             if (pa < 1) continue;
@@ -1881,6 +1955,8 @@
             textAlign(CENTER, CENTER);
             text(nt.text, nt.x, nt.y + random(-1, 1));
         }
+
+        pop(); // End screen-shake transform
 
         // ── Sound visualization (voice as generative force) ──
         if (voiceActive && frameCount - lastVoiceTime < 40) {
@@ -2211,7 +2287,8 @@
 
         // Aggravate transformation in dense areas, weaken when low energy
         let energyMag = energy < 30 ? 0.3 + (energy / 30) * 0.7 : 1;
-        let mag = (highDensity ? 1.5 : 1) * energyMag;
+        let voiceMag = (s.voiceVoidBoost || 1);
+        let mag = (highDensity ? 1.5 : 1) * energyMag * voiceMag;
 
         // ═══ TRANSFORMATION BURST ═══
         if (transformation === 'glitchspeak') {
