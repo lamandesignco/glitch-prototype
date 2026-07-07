@@ -47,65 +47,6 @@
             font-size: 11px; pointer-events: none; font-family: 'Courier New', monospace;
             letter-spacing: 2px; text-transform: uppercase;
         }
-        #egg-overlay {
-            display: none;
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); z-index: 100;
-            align-items: center; justify-content: center;
-            font-family: 'Courier New', monospace;
-        }
-        #egg-overlay.show { display: flex; }
-        #egg-popup {
-            background: #0a0810;
-            border: 1px solid rgba(200,180,220,0.3);
-            padding: 28px 24px; max-width: 400px; width: 90%;
-            text-align: center;
-            position: relative;
-        }
-        #egg-popup-title {
-            font-size: 11px; letter-spacing: 2px;
-            margin-bottom: 16px; text-transform: uppercase;
-        }
-        #egg-popup-body {
-            font-size: 11px; line-height: 1.6;
-            color: rgba(200,180,220,0.7); margin-bottom: 12px;
-        }
-        #egg-popup-options { margin-bottom: 12px; }
-        #egg-popup-options button {
-            background: transparent;
-            border: 1px solid rgba(200,180,220,0.25);
-            color: rgba(200,180,220,0.6);
-            padding: 6px 14px; margin: 4px;
-            font-family: 'Courier New', monospace; font-size: 10px;
-            cursor: pointer; transition: all 0.3s;
-        }
-        #egg-popup-options button:hover {
-            border-color: rgba(200,180,220,0.6);
-            color: rgba(200,180,220,0.9);
-        }
-        #egg-popup-close {
-            background: transparent;
-            border: 1px solid rgba(200,180,220,0.15);
-            color: rgba(200,180,220,0.4);
-            padding: 5px 20px; margin-top: 12px;
-            font-family: 'Courier New', monospace; font-size: 9px;
-            cursor: pointer; letter-spacing: 1px;
-            transition: all 0.3s;
-        }
-        #egg-popup-close:hover {
-            border-color: rgba(200,180,220,0.5);
-            color: rgba(200,180,220,0.8);
-        }
-        #egg-notification {
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            font-family: 'Courier New', monospace;
-            font-size: 9px; letter-spacing: 1px;
-            color: rgba(220,180,100,0.7);
-            pointer-events: none; z-index: 50;
-            opacity: 0; transition: opacity 0.5s;
-            text-align: center;
-        }
-        #egg-notification.show { opacity: 1; }
     </style>
 </head>
 <body>
@@ -118,15 +59,6 @@
     <div id="energy-bar"><div id="energy-fill"></div></div>
     <div id="mode-display">\u25C9 draw</div>
     <div id="voice-status" style="position:fixed;bottom:36px;right:20px;font-size:7px;pointer-events:none;font-family:'Courier New',monospace;color:rgba(200,180,220,0.2);letter-spacing:1px">voice: ...</div>
-    <div id="egg-notification"></div>
-    <div id="egg-overlay">
-        <div id="egg-popup">
-            <div id="egg-popup-title"></div>
-            <div id="egg-popup-body"></div>
-            <div id="egg-popup-options"></div>
-            <button id="egg-popup-close">Continue</button>
-        </div>
-    </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     <script>
     // ─── Configuration ───────────────────────────────────────────────
@@ -251,58 +183,6 @@
     let resistanceTriggered = false;
     let resistanceTextTimer = 0;
 
-    // ─── Easter Eggs ────────────────────────────────────────────────
-    let eggs = [];
-    let eggPopupActive = false;
-    let eggNotificationTimer = 0;
-    let eggNotificationText = '';
-
-    const THEORY_QUOTES = [
-        { text: 'What is now a glitch will become a fashion.', source: 'Menkman' },
-        { text: 'To glitch is to embrace malfunction.', source: 'Russell' },
-        { text: 'There is no such thing as ethical graphic design under capitalism.', source: 'Pater' },
-        { text: 'The static, linear notion of information-transmission can be interrupted.', source: 'Menkman' },
-        { text: 'One is not born, but rather becomes, a body.', source: 'Russell' },
-        { text: 'Glitchspeak is a language of resistance against the norms of digital culture.', source: 'Menkman' },
-        { text: 'The commons is not a resource but a relationship.', source: 'Pater' },
-        { text: 'Malfunction reveals what function hides.', source: 'Russell' },
-        { text: 'Compression is not neutral; it is an act of forgetting.', source: 'Menkman' },
-        { text: 'Resistance is not the opposite of power but its friction.', source: 'Russell' }
-    ];
-
-    const GLITCHSPEAK_SEEDS = [
-        { word: 'd1sturb4nc3', meaning: 'disturbance' },
-        { word: '3ncrypt10n', meaning: 'encryption' },
-        { word: 'r3fus4l', meaning: 'refusal' },
-        { word: 'p4l1mp53st', meaning: 'palimpsest' },
-        { word: 'gh0st1ng', meaning: 'ghosting' },
-        { word: 'fr4ctur3', meaning: 'fracture' },
-        { word: 'm4nf3st0', meaning: 'manifesto' },
-        { word: 'd3c0d3', meaning: 'decode' }
-    ];
-
-    // Achievements (localStorage)
-    let achievements = {};
-    try {
-        let saved = localStorage.getItem('glitchDriftAchievements');
-        if (saved) achievements = JSON.parse(saved);
-    } catch(e) {}
-
-    function saveAchievements() {
-        try { localStorage.setItem('glitchDriftAchievements', JSON.stringify(achievements)); } catch(e) {}
-    }
-
-    function showEggNotification(text, durationMs) {
-        eggNotificationText = text;
-        eggNotificationTimer = durationMs || 4000;
-        let el = document.getElementById('egg-notification');
-        if (el) { el.textContent = text; el.classList.add('show'); }
-    }
-
-    function spawnInitialEggs() {
-        // Server sends eggs in welcome; this is fallback if offline
-    }
-
     // ─── Narrative messages (resistance/energy) ──────────────────────
     let narrativeTexts = [];
 
@@ -374,10 +254,6 @@
                         if (strokes.length > CFG.maxStrokes) strokes.splice(0, strokes.length - CFG.maxStrokes);
                     }
                     updateUserCount();
-                    // Receive egg state from server
-                    if (d.eggs) {
-                        eggs = d.eggs.map(e => ({ ...e, discovered: e.discovered || false }));
-                    }
                 } else if (d.type === 'stroke') {
                     let s = Stroke.deserialize(d.data);
                     if (s && !strokes.find(st => st.id === s.id)) {
@@ -403,47 +279,6 @@
                         if (!glitchspeak.includes(w)) glitchspeak.push(w);
                     }
                     if (glitchspeak.length > 150) glitchspeak = glitchspeak.slice(-100);
-                } else if (d.type === 'eggs-sync') {
-                    // Server sent updated egg state
-                    let serverIds = d.eggs.map(e => e.id);
-                    // Remove eggs no longer on server
-                    eggs = eggs.filter(e => serverIds.includes(e.id));
-                    // Add/update eggs from server
-                    for (let se of d.eggs) {
-                        let existing = eggs.find(e => e.id === se.id);
-                        if (existing) {
-                            existing.discovered = se.discovered;
-                        } else {
-                            eggs.push({ ...se, discovered: se.discovered || false });
-                        }
-                    }
-                } else if (d.type === 'egg-discovered') {
-                    let egg = eggs.find(e => e.id === d.egg.id);
-                    if (egg) egg.discovered = true;
-                    let names = { theory: 'Th30ry Fragm3nt', refusal: 'R3fus4l Gam3', glitchspeak: 'Gl1tchsp34k S33d', commons: 'C0mm0ns Ch4ll3ng3', transformation: 'Tr4nsf0rm4t10n Tr1gg3r', energy: '3n3rgy F0unt41n' };
-                    let typeName = names[d.egg.type] || '3gg';
-                    showEggNotification('\u2726 3gg d1sc0v3r3d: ' + typeName + ' at (' + Math.floor(d.egg.x) + ', ' + Math.floor(d.egg.y) + ')', 5000);
-                } else if (d.type === 'egg-commons-count') {
-                    // Update commons challenge counter
-                    let egg = eggs.find(e => e.id === d.eggId);
-                    if (egg) {
-                        if (!egg.commonsCount) egg.commonsCount = 0;
-                        egg.commonsCount = d.count;
-                        // If we have the popup open, update it
-                        if (eggPopupActive && popupEgg && popupEgg.id === d.eggId) {
-                            updateCommonsPopup(d.count);
-                        }
-                    }
-                } else if (d.type === 'egg-commons-activated') {
-                    let egg = eggs.find(e => e.id === d.eggId);
-                    if (egg) egg.discovered = true;
-                    // Trigger golden burst effect
-                    createCommonsBurst(d.x, d.y);
-                    showEggNotification('\u2726 Th3 c0mm0ns sp34ks! C0ll3ct1v3 4ct10n 4ch13v3d.', 6000);
-                    if (eggPopupActive) {
-                        document.getElementById('egg-popup-body').textContent = 'The commons speaks! The collective has acted. A golden burst spreads across the grid.';
-                        document.getElementById('egg-popup-options').innerHTML = '';
-                    }
                 }
             };
             socket.onclose = function(e) {
@@ -1715,15 +1550,6 @@
     function draw() {
         frameCounter++;
 
-        // ── Egg notification timer ──
-        if (eggNotificationTimer > 0) {
-            eggNotificationTimer -= 16;
-            if (eggNotificationTimer <= 0) {
-                let el = document.getElementById('egg-notification');
-                if (el) el.classList.remove('show');
-            }
-        }
-
         if (frameCount < 5) {
             background(BASE.bg[0], BASE.bg[1], BASE.bg[2]);
         } else {
@@ -2130,14 +1956,6 @@
             text(nt.text, nt.x, nt.y + random(-1, 1));
         }
 
-        // ── Easter egg rendering ──
-        for (let egg of eggs) {
-            if (egg.discovered) continue;
-            let sx = egg.x + scrollX, sy = egg.y + scrollY;
-            if (sx < -40 || sx > width + 40 || sy < -40 || sy > height + 40) continue;
-            renderEgg(sx, sy, egg);
-        }
-
         pop(); // End screen-shake transform
 
         // ── Sound visualization (voice as generative force) ──
@@ -2205,18 +2023,6 @@
         if (!voiceReady) startVoice();
 
         let gx = mouseX - scrollX, gy = mouseY - scrollY;
-
-        // ── Easter egg click detection ──
-        if (!eggPopupActive) {
-            for (let egg of eggs) {
-                if (egg.discovered) continue;
-                let d = dist(egg.x, egg.y, gx, gy);
-                if (d < 30) {
-                    activateEgg(egg);
-                    return;
-                }
-            }
-        }
 
         if (currentMode === MODES.DRAW) {
             shockwaves.push(new Shockwave(gx, gy));
@@ -2650,316 +2456,6 @@
             if (navigator.clipboard) navigator.clipboard.writeText(window.location.href).catch(() => {});
         } catch (e) {}
     }
-
-    // ─── Easter Egg Functions ──────────────────────────────────────
-
-    let popupEgg = null;
-
-    function renderEgg(sx, sy, egg) {
-        let pulse = sin(frameCount * 0.03 + egg.id.length) * 0.3 + 0.7;
-        let glowSize = 10 + pulse * 6;
-        switch (egg.type) {
-            case 'theory':
-                // Purple pulsing orb
-                noStroke();
-                fill(180, 120, 255, 40 * pulse);
-                ellipse(sx, sy, glowSize * 2.5, glowSize * 2.5);
-                fill(180, 120, 255, 120 * pulse);
-                ellipse(sx, sy, glowSize, glowSize);
-                fill(200, 160, 255, 80 * pulse);
-                ellipse(sx, sy, glowSize * 0.5, glowSize * 0.5);
-                break;
-            case 'refusal':
-                // Red pulsing orb with 'NO'
-                noStroke();
-                fill(220, 60, 60, 40 * pulse);
-                ellipse(sx, sy, glowSize * 2.5, glowSize * 2.5);
-                fill(220, 60, 60, 150 * pulse);
-                ellipse(sx, sy, glowSize, glowSize);
-                fill(255, 100, 100, 180 * pulse);
-                textFont('Courier New');
-                textSize(7 + pulse * 2);
-                textAlign(CENTER, CENTER);
-                text('NO', sx, sy);
-                break;
-            case 'glitchspeak':
-                // Flickering word
-                let seedIdx = Math.floor(egg.id.length * 1.7) % GLITCHSPEAK_SEEDS.length;
-                let seedWord = GLITCHSPEAK_SEEDS[seedIdx].word;
-                let flicker = Math.random() < 0.15 ? 0.3 : 0.7 + pulse * 0.3;
-                noStroke();
-                fill(140, 200, 140, 30 * flicker);
-                ellipse(sx, sy, glowSize * 2, glowSize * 2);
-                fill(120, 200, 120, 140 * flicker);
-                textFont('Courier New');
-                textSize(8 + pulse * 1.5);
-                textAlign(CENTER, CENTER);
-                text(corruptText(seedWord, 0.3), sx, sy);
-                break;
-            case 'commons':
-                // Golden glowing orb
-                noStroke();
-                fill(220, 180, 60, 30 * pulse);
-                ellipse(sx, sy, glowSize * 3, glowSize * 3);
-                fill(220, 200, 80, 100 * pulse);
-                ellipse(sx, sy, glowSize * 1.3, glowSize * 1.3);
-                fill(255, 220, 120, 150 * pulse);
-                ellipse(sx, sy, glowSize * 0.5, glowSize * 0.5);
-                break;
-            case 'transformation':
-                // Dark swirling vortex
-                noStroke();
-                fill(80, 40, 120, 50 * pulse);
-                ellipse(sx, sy, glowSize * 2.5, glowSize * 2.5);
-                let angleOff = frameCount * 0.04 + egg.id.length;
-                for (let i = 0; i < 4; i++) {
-                    let a = angleOff + i * HALF_PI;
-                    let dx = cos(a) * glowSize * 0.6;
-                    let dy = sin(a) * glowSize * 0.6;
-                    fill(100, 60, 160, 80 * pulse);
-                    ellipse(sx + dx, sy + dy, 3 + pulse * 2, 3 + pulse * 2);
-                }
-                fill(60, 30, 100, 100 * pulse);
-                ellipse(sx, sy, glowSize * 0.5, glowSize * 0.5);
-                break;
-            case 'energy':
-                // Blue glowing spring
-                noStroke();
-                fill(60, 140, 255, 40 * pulse);
-                ellipse(sx, sy, glowSize * 2.5, glowSize * 2.5);
-                fill(80, 180, 255, 140 * pulse);
-                ellipse(sx, sy, glowSize * 1.2, glowSize * 1.2);
-                fill(140, 220, 255, 180 * pulse);
-                ellipse(sx, sy, glowSize * 0.4, glowSize * 0.4);
-                // Small cross/sparkle
-                stroke(140, 220, 255, 100 * pulse);
-                strokeWeight(0.8);
-                line(sx - 3, sy, sx + 3, sy);
-                line(sx, sy - 3, sx, sy + 3);
-                break;
-        }
-    }
-
-    function activateEgg(egg) {
-        if (eggPopupActive || egg.discovered) return;
-        eggPopupActive = true;
-        popupEgg = egg;
-
-        // Send discovery to server
-        if (socket && wsConnected) {
-            socket.send(JSON.stringify({ type: 'egg-discover', eggId: egg.id, userId: me.id }));
-        }
-
-        let titleEl = document.getElementById('egg-popup-title');
-        let bodyEl = document.getElementById('egg-popup-body');
-        let optionsEl = document.getElementById('egg-popup-options');
-        let closeEl = document.getElementById('egg-popup-close');
-
-        if (!titleEl || !bodyEl || !optionsEl || !closeEl) { eggPopupActive = false; return; }
-
-        let overlay = document.getElementById('egg-overlay');
-        if (overlay) overlay.classList.add('show');
-
-        let typeName = { theory: '\u2726 Th30ry Fragm3nt \u2726', refusal: '\u2726 R3fus4l Gam3 \u2726', glitchspeak: '\u2726 Gl1tchsp34k S33d \u2726', commons: '\u2726 C0mm0ns Ch4ll3ng3 \u2726', transformation: '\u2726 Tr4nsf0rm4t10n Tr1gg3r \u2726', energy: '\u2726 3n3rgy F0unt41n \u2726' };
-        let titleColor = { theory: 'rgba(180,120,255,0.7)', refusal: 'rgba(220,60,60,0.7)', glitchspeak: 'rgba(120,200,120,0.7)', commons: 'rgba(220,200,80,0.7)', transformation: 'rgba(100,60,160,0.7)', energy: 'rgba(80,180,255,0.7)' };
-
-        titleEl.textContent = typeName[egg.type] || '\u2726 3gg \u2726';
-        titleEl.style.color = titleColor[egg.type] || 'rgba(200,180,220,0.7)';
-        optionsEl.innerHTML = '';
-        closeEl.style.display = 'inline-block';
-
-        switch (egg.type) {
-            case 'theory':
-                let quote = THEORY_QUOTES[Math.floor(Math.random() * THEORY_QUOTES.length)];
-                bodyEl.innerHTML = '&ldquo;' + quote.text + '&rdquo;<br><br><span style="font-size:9px;opacity:0.4">\u2014 ' + quote.source + '</span>';
-                break;
-            case 'refusal':
-                bodyEl.innerHTML = 'The system asks you to draw a perfect circle. What do you do?';
-                optionsEl.innerHTML = '<button onclick="refusalChoice(false)">Draw the circle</button><button onclick="refusalChoice(true)">Refuse</button>';
-                closeEl.style.display = 'none';
-                break;
-            case 'glitchspeak':
-                let seed = GLITCHSPEAK_SEEDS[Math.floor(Math.random() * GLITCHSPEAK_SEEDS.length)];
-                bodyEl.innerHTML = 'A new word is forming: <span style="color:rgba(120,200,120,0.8);font-size:14px;display:block;margin:10px 0">' + seed.word + '</span>"' + seed.meaning + '"<br><br>It has been added to the glitchspeak dictionary.';
-                if (!glitchspeak.includes(seed.word)) {
-                    glitchspeak.push(seed.word);
-                    if (socket && wsConnected) {
-                        socket.send(JSON.stringify({ type: 'glitchspeak', words: [seed.word] }));
-                    }
-                }
-                if (!achievements.glitchspeak) {
-                    achievements.glitchspeak = true;
-                    saveAchievements();
-                }
-                break;
-            case 'commons':
-                let cId = egg.id;
-                bodyEl.innerHTML = 'This egg requires 3 users to click it within 30 seconds.<br><br><span style="font-size:14px;color:rgba(220,200,80,0.8)" id="commons-counter">Users: 0 / 3</span>';
-                optionsEl.innerHTML = '<button onclick="commonsClick(\'' + cId + '\')">Click to participate</button>';
-                closeEl.style.display = 'none';
-                // Send commons click
-                if (socket && wsConnected) {
-                    socket.send(JSON.stringify({ type: 'egg-commons-click', eggId: egg.id, userId: me.id }));
-                }
-                egg.commonsCount = 1;
-                break;
-            case 'transformation':
-                bodyEl.innerHTML = 'Do you want to disrupt the grid?';
-                optionsEl.innerHTML = '<button onclick="transformationChoice(true)">Yes</button><button onclick="transformationChoice(false)">No</button>';
-                closeEl.style.display = 'none';
-                break;
-            case 'energy':
-                bodyEl.innerHTML = 'A fountain of energy surges through you.<br><br><span style="color:rgba(80,180,255,0.8);font-size:14px">+100 3n3rgy</span>';
-                energy = min(100, energy + 100);
-                if (!achievements.energy) {
-                    achievements.energy = true;
-                    saveAchievements();
-                }
-                // Mark as discovered
-                egg.discovered = true;
-                // Sparkle burst
-                for (let i = 0; i < 20; i++) {
-                    let ang = random(TWO_PI);
-                    let spd = 1 + random(3);
-                    particles.push(new Particle(
-                        egg.x + scrollX, egg.y + scrollY,
-                        cos(ang) * spd, sin(ang) * spd,
-                        20 + floor(random(20)), random(1, 3),
-                        [80, 180 + random(-40, 40), 255]
-                    ));
-                }
-                if (!achievements.energy) {
-                    achievements.energy = true;
-                    saveAchievements();
-                }
-                break;
-        }
-
-        // Track achievement for theory fragment
-        if (egg.type === 'theory' && !achievements.theory) {
-            achievements.theory = true;
-            saveAchievements();
-        }
-    }
-
-    function closeEggPopup() {
-        eggPopupActive = false;
-        popupEgg = null;
-        document.getElementById('egg-overlay').classList.remove('show');
-    }
-
-    // ─── Egg mini-game handlers ────────────────────────────────────
-    function refusalChoice(refuse) {
-        let bodyEl = document.getElementById('egg-popup-body');
-        let optionsEl = document.getElementById('egg-popup-options');
-        let closeEl = document.getElementById('egg-popup-close');
-        if (refuse) {
-            bodyEl.innerHTML = 'You refused. The system glitches. You win.<br><br><span style="color:rgba(220,60,60,0.7)">"To glitch is to embrace malfunction."</span>';
-            // Burst of particles
-            let egg = popupEgg;
-            if (egg) {
-                for (let i = 0; i < 30; i++) {
-                    let ang = random(TWO_PI);
-                    let spd = 1 + random(4);
-                    particles.push(new Particle(
-                        egg.x + scrollX, egg.y + scrollY,
-                        cos(ang) * spd, sin(ang) * spd,
-                        20 + floor(random(20)), random(1, 4),
-                        [220 + random(-40, 40), 60 + random(-40, 40), 60 + random(-40, 40)]
-                    ));
-                }
-                egg.discovered = true;
-            }
-            if (!achievements.refusal) {
-                achievements.refusal = true;
-                saveAchievements();
-            }
-        } else {
-            bodyEl.innerHTML = 'You complied. The system accepts. Nothing happens.';
-        }
-        optionsEl.innerHTML = '';
-        closeEl.style.display = 'inline-block';
-    }
-
-    function commonsClick(eggId) {
-        if (socket && wsConnected) {
-            socket.send(JSON.stringify({ type: 'egg-commons-click', eggId, userId: me.id }));
-        }
-        document.getElementById('egg-popup-options').innerHTML = '<span style="font-size:9px;opacity:0.5">Waiting for other users...</span>';
-    }
-
-    function updateCommonsPopup(count) {
-        let counter = document.getElementById('commons-counter');
-        if (counter) counter.textContent = 'Users: ' + count + ' / 3';
-    }
-
-    function createCommonsBurst(x, y) {
-        let sx = x + scrollX, sy = y + scrollY;
-        for (let i = 0; i < 40; i++) {
-            let ang = random(TWO_PI);
-            let spd = 1 + random(5);
-            particles.push(new Particle(
-                sx, sy,
-                cos(ang) * spd, sin(ang) * spd,
-                30 + floor(random(30)), random(1, 5),
-                [220 + random(-40, 40), 200 + random(-40, 40), 80 + random(-40, 40)]
-            ));
-        }
-        if (!achievements.commons) {
-            achievements.commons = true;
-            saveAchievements();
-        }
-    }
-
-    function transformationChoice(disrupt) {
-        let bodyEl = document.getElementById('egg-popup-body');
-        let optionsEl = document.getElementById('egg-popup-options');
-        let closeEl = document.getElementById('egg-popup-close');
-        let egg = popupEgg;
-        if (disrupt && egg) {
-            bodyEl.innerHTML = 'The grid transforms...<br><br><span style="color:rgba(100,60,160,0.7)">Destruction creates new forms.</span>';
-            // Massive grid disturbance
-            for (let gl of gridLines) gl.applyDisturbance(egg.x, egg.y, 1.2);
-            // Fracture nearby strokes
-            for (let s of strokes) {
-                for (let pt of s.points) {
-                    if (dist(pt.x, pt.y, egg.x, egg.y) < 200) {
-                        pt.x += random(-80, 80);
-                        pt.y += random(-80, 80);
-                    }
-                }
-            }
-            // Shockwave
-            let sw = new Shockwave(egg.x, egg.y);
-            sw.maxRadius = 400;
-            sw.life = 60;
-            sw.maxLife = 60;
-            shockwaves.push(sw);
-            // Particle burst
-            for (let i = 0; i < 40; i++) {
-                let ang = random(TWO_PI);
-                let spd = 1 + random(4);
-                particles.push(new Particle(
-                    egg.x + scrollX, egg.y + scrollY,
-                    cos(ang) * spd, sin(ang) * spd,
-                    20 + floor(random(30)), random(1, 5),
-                    [100 + random(-40, 40), 60 + random(-40, 40), 160 + random(-40, 40)]
-                ));
-            }
-            egg.discovered = true;
-            if (!achievements.transformation) {
-                achievements.transformation = true;
-                saveAchievements();
-            }
-        } else if (egg) {
-            bodyEl.innerHTML = 'The grid remains. For now.';
-        }
-        optionsEl.innerHTML = '';
-        closeEl.style.display = 'inline-block';
-    }
-
-    // ─── Close popup event ─────────────────────────────────────────
-    document.getElementById('egg-popup-close').addEventListener('click', closeEggPopup);
 
     (function loadFromHash() {
         let hash = window.location.hash.slice(1);
