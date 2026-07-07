@@ -381,15 +381,23 @@
             this.timestamp = Date.now();
             this.decay = 0;
             this.colorSeed = Math.random() * 1000;
+            this.transformation = null;
+            this.refused = false;
+            this.glitchspeakWord = null;
+            this.artifacts = [];
+            this.revealTimer = 0;
+            this.decayMultiplier = 1;
+            this.fossilized = false;
+            this.hadGlitchAt40 = false;
         }
         addPoint(x, y) { this.points.push({ x, y }); }
-        update() { this.decay += CFG.decayRate; }
+        update() { this.decay += CFG.decayRate * this.decayMultiplier; if (this.revealTimer > 0) this.revealTimer--; }
         get alive() { return this.decay < 2.5; }
         get alpha() { return map(this.decay, 0, 2.5, 200, 5); }
 
         display() {
+            if (this.points.length < 2) return;
             let a = this.alpha;
-            if (a < 1 || this.points.length < 2) return;
 
             let p = this.params;
             let col = p ? p.color : [120, 80, 200];
@@ -399,48 +407,163 @@
             let pChance = p ? p.particleChance : 0.02;
 
             let n = this.points.length;
+
+            // ── Structure reveal: flash data points ──
+            if (this.revealTimer > 0) {
+                let rAlpha = map(this.revealTimer, 0, 40, 0, 150);
+                for (let pt of this.points) {
+                    noStroke();
+                    fill(180, 220, 255, rAlpha);
+                    ellipse(pt.x + scrollX, pt.y + scrollY, 3, 3);
+                }
+            }
+
+            // ── Active decay effects ──
+            let decayPct = this.decay / 2.5;
+
+            // At 70% opacity: glitch pixel shift
+            if (decayPct > 0.3 && decayPct < 0.5 && Math.random() < 0.08) {
+                tremble *= 3;
+            }
+
+            // At 40% opacity: emit glitchspeak word once
+            if (decayPct > 0.55 && decayPct < 0.65 && !this.hadGlitchAt40 && this.transformation !== 'glitchspeak') {
+                this.hadGlitchAt40 = true;
+                let midIdx = floor(n / 2);
+                let midPt = this.points[midIdx] || this.points[0];
+                let gWord = generateGlitchspeak();
+                createNoiseText(midPt.x + scrollX + random(-30, 30), midPt.y + scrollY + random(-30, 30), gWord, 'generated');
+            }
+
+            // At 20% opacity: stutter (repeat a segment)
+            let stutter = false;
+            if (decayPct > 0.75 && Math.random() < 0.04) {
+                stutter = true;
+            }
+
+            // ── Fossil rendering ──
+            let fossilDarken = this.fossilized ? 0.5 : 1;
+
             for (let i = 1; i < n; i++) {
                 let p1 = this.points[i - 1];
                 let p2 = this.points[i];
 
-                // 25% chance of break
-                if (Math.random() < 0.25) continue;
+                // 25% chance of break (higher for refused strokes)
+                let breakChance = this.refused ? 0.5 : 0.25;
+                if (Math.random() < breakChance) continue;
 
-                // Distance-based speed factor
                 let segDist = dist(p1.x, p1.y, p2.x, p2.y);
                 let speedFactor = constrain(segDist / 10, 0.3, 2.5) * speedMod;
 
-                // Color shift per segment
+                // Color
                 let shift = noise(i * 0.15, this.colorSeed) * 50 - 25;
-                let r = constrain(col[0] + shift * random(0.8, 1.2), 20, 255);
-                let g = constrain(col[1] + shift * random(0.6, 1.4), 20, 255);
-                let b = constrain(col[2] + shift * random(0.8, 1.2), 20, 255);
+                let r = constrain(col[0] + shift * random(0.8, 1.2), 20, 255) * fossilDarken;
+                let g = constrain(col[1] + shift * random(0.6, 1.4), 20, 255) * fossilDarken;
+                let b = constrain(col[2] + shift * random(0.8, 1.2), 20, 255) * fossilDarken;
 
-                // Thickness: base + speed influence
+                if (this.fossilized) {
+                    r *= 0.5; g *= 0.5; b *= 0.5;
+                }
+
+                // Thickness
                 let segThick = (thick * 0.4 + thick * 0.6 * speedFactor) * (0.5 + noise(i * 0.2, this.colorSeed + 100));
+                if (this.fossilized) segThick *= 0.7;
 
-                // Noise offset per endpoint
+                // Tremble with active decay glitching
+                let activeTremble = tremble;
+                if (Math.random() < 0.04 && decayPct > 0.3) {
+                    activeTremble *= 3;
+                }
+
                 let ns = this.colorSeed + i * 0.5;
-                let ox1 = (noise(ns, this.decay * 2) - 0.5) * tremble * speedFactor;
-                let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * tremble * speedFactor;
-                let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * tremble * speedFactor;
-                let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * tremble * speedFactor;
+                let ox1 = (noise(ns, this.decay * 2) - 0.5) * activeTremble * speedFactor;
+                let oy1 = (noise(ns, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
+                let ox2 = (noise(ns + 0.5, this.decay * 2) - 0.5) * activeTremble * speedFactor;
+                let oy2 = (noise(ns + 0.5, this.decay * 2 + 50) - 0.5) * activeTremble * speedFactor;
 
-                stroke(r, g, b, a);
-                strokeWeight(max(0.3, segThick));
-                line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
+                // Refusal: corrupted alpha flicker
+                let segAlpha = a;
+                if (this.refused && Math.random() < 0.15) segAlpha = 0;
 
-                // Particles (grid-relative)
+                if (this.fossilized) {
+                    stroke(r, g, b, segAlpha);
+                    strokeWeight(max(0.3, segThick));
+                    line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
+                    // Fossil: extra fractured line
+                    if (Math.random() < 0.15) {
+                        stroke(r * 0.6, g * 0.6, b * 0.6, segAlpha * 0.7);
+                        strokeWeight(0.5);
+                        line(p1.x + scrollX + ox1 + random(-5, 5), p1.y + scrollY + oy1 + random(-5, 5),
+                             p2.x + scrollX + ox2 + random(-5, 5), p2.y + scrollY + oy2 + random(-5, 5));
+                    }
+                } else {
+                    stroke(r, g, b, segAlpha);
+                    strokeWeight(max(0.3, segThick));
+                    line(p1.x + scrollX + ox1, p1.y + scrollY + oy1, p2.x + scrollX + ox2, p2.y + scrollY + oy2);
+                }
+
+                // Stutter effect
+                if (stutter && i > 3) {
+                    stroke(255, 255, 255, segAlpha * 0.3);
+                    strokeWeight(1);
+                    line(p1.x + scrollX + random(-3, 3), p1.y + scrollY + random(-3, 3),
+                         this.points[i - 3].x + scrollX + random(-3, 3), this.points[i - 3].y + scrollY + random(-3, 3));
+                }
+
+                // Particles
                 if (this.decay < 0.6 && Math.random() < pChance * speedFactor && particles.length < CFG.particleCap) {
                     let angle = random(TWO_PI);
                     let spd = 0.5 + random() * 1.5;
                     particles.push(new Particle(p2.x, p2.y, cos(angle) * spd, sin(angle) * spd, 20 + floor(random(30)), random(0.5, 2), [r, g, b]));
                 }
             }
+
+            // ── Collaborator artifacts ──
+            for (let art of this.artifacts) {
+                if (art.life <= 0) continue;
+                art.life--;
+                let artA = map(art.life, 0, art.maxLife, 0, 100);
+                if (Math.random() < 0.3) {
+                    noStroke();
+                    fill(200, 180, 220, artA);
+                    ellipse(art.x + scrollX + random(-2, 2), art.y + scrollY + random(-2, 2), art.size, art.size);
+                }
+            }
+
+            // ── Glitchspeak word from transformation ──
+            if (this.glitchspeakWord && this.decay < 2.0) {
+                let mid = this.points[floor(this.points.length / 2)];
+                let gAlpha = map(this.decay, 0, 2.0, 120, 0);
+                fill(200, 180, 220, gAlpha);
+                noStroke();
+                textFont('Courier New');
+                textSize(9);
+                textAlign(CENTER, CENTER);
+                text(this.glitchspeakWord, mid.x + scrollX, mid.y + scrollY - 20);
+            }
+
+            // ── Ghost trace at end of life ──
+            if (this.decay > 2.3) {
+                let ghostA = map(this.decay, 2.3, 2.5, 20, 0);
+                let c = this.fossilized ? BASE.fossil : BASE.ghost;
+                for (let i = 0; i < n; i += max(1, floor(n / 10))) {
+                    let pt = this.points[i];
+                    if (Math.random() < 0.4) continue;
+                    noStroke();
+                    fill(c[0], c[1], c[2], ghostA * (0.5 + Math.random() * 0.5));
+                    ellipse(pt.x + scrollX, pt.y + scrollY, 1.2, 1.2);
+                }
+            }
         }
 
         serialize() {
-            return { id: this.id, userId: this.userId, params: this.params, points: this.points, timestamp: this.timestamp };
+            return {
+                id: this.id, userId: this.userId, params: this.params,
+                points: this.points, timestamp: this.timestamp,
+                transformation: this.transformation, refused: this.refused,
+                glitchspeakWord: this.glitchspeakWord, artifacts: this.artifacts,
+                fossilized: this.fossilized, decayMultiplier: this.decayMultiplier
+            };
         }
 
         static deserialize(d) {
@@ -448,6 +571,13 @@
             s.id = d.id;
             s.points = d.points;
             s.timestamp = d.timestamp;
+            s.transformation = d.transformation || null;
+            s.refused = d.refused || false;
+            s.glitchspeakWord = d.glitchspeakWord || null;
+            s.artifacts = d.artifacts || [];
+            s.revealTimer = 0;
+            s.fossilized = d.fossilized || false;
+            s.decayMultiplier = d.decayMultiplier || 1;
             return s;
         }
     }
@@ -746,9 +876,85 @@
         for (let gl of gridLines) gl.applyDisturbance(gx, gy, 0.4);
     }
 
+    function applyTransformation(s) {
+        if (s.points.length < 2) return;
+
+        // Always: collaborator artifacts (system adds to every stroke)
+        let numArtifacts = 1 + floor(random(3));
+        for (let i = 0; i < numArtifacts; i++) {
+            let idx = floor(random(s.points.length));
+            let pt = s.points[idx];
+            s.artifacts.push({
+                x: pt.x + random(-25, 25), y: pt.y + random(-25, 25),
+                size: random(1, 4),
+                life: 30 + floor(random(30)),
+                maxLife: 60
+            });
+        }
+
+        // Always: reveal structure flash
+        s.revealTimer = 40;
+
+        // Refusal: 10% chance — stroke gets corrupted
+        if (Math.random() < 0.1) {
+            s.refused = true;
+            for (let i = 0; i < s.points.length; i += 3) {
+                s.points[i].x += random(-60, 60);
+                s.points[i].y += random(-60, 60);
+            }
+        }
+
+        // Transformation roll
+        let roll = Math.random();
+        if (roll < 0.3) {
+            // Fracture: split into 2-5 sub-strokes that drift apart
+            s.transformation = 'fracture';
+            let numSegments = 2 + floor(random(4));
+            let segSize = floor(s.points.length / numSegments);
+            for (let i = 1; i < numSegments; i++) {
+                let start = i * segSize;
+                if (start >= s.points.length) break;
+                let end = (i === numSegments - 1) ? s.points.length : (i + 1) * segSize;
+                let sub = Stroke.deserialize(s.serialize());
+                sub.id = s.id + '_f' + i;
+                sub.points = s.points.slice(start, end).map(pt => ({
+                    x: pt.x + cos(random(TWO_PI)) * random(8, 25),
+                    y: pt.y + sin(random(TWO_PI)) * random(8, 25)
+                }));
+                sub.revealTimer = 0;
+                sub.artifacts = [];
+                sub.transformation = null;
+                strokes.push(sub);
+                if (strokes.length > CFG.maxStrokes) strokes.shift();
+            }
+        } else if (roll < 0.6) {
+            // Glitchspeak Emergence: word floats up from midpoint
+            s.transformation = 'glitchspeak';
+            let mid = s.points[floor(s.points.length / 2)] || s.points[0];
+            let word = generateGlitchspeak();
+            s.glitchspeakWord = word;
+            createNoiseText(mid.x + scrollX, mid.y + scrollY, word, 'generated');
+            broadcastGlitchspeak(word);
+        } else if (roll < 0.8) {
+            // Fossilization: darker, fractured, slow decay
+            s.transformation = 'fossil';
+            s.fossilized = true;
+            s.decayMultiplier = 0.3;
+        } else {
+            // Grid Shock: shockwave + fast decay
+            s.transformation = 'shock';
+            let mid = s.points[floor(s.points.length / 2)] || s.points[0];
+            let sw = new Shockwave(mid.x, mid.y);
+            sw.maxRadius = 300; sw.life = 40; sw.maxLife = 40;
+            shockwaves.push(sw);
+            s.decayMultiplier = 2;
+        }
+    }
+
     function mouseReleased() {
         if (currentStroke) {
             if (currentStroke.points.length > 1) {
+                applyTransformation(currentStroke);
                 broadcastStroke(currentStroke);
             } else {
                 strokes.pop();
