@@ -138,6 +138,7 @@
 
     // ─── Rift perks (30s buffs) ──────────────────────────────────────
     let riftPerks = {};  // { type: remainingMs, ... }
+    let textDistort = 0;
 
     // ─── Region density (claiming resistance) ────────────────────────
     const REGION_SIZE = 200;
@@ -651,7 +652,14 @@
                 this.glitchspeakWord = generateGlitchspeak();
             }
         }
-        addPoint(x, y) { this.points.push({ x, y }); }
+        addPoint(x, y) {
+            if (this._anchorCorrupt) {
+                x += random(-3, 3);
+                y += random(-3, 3);
+                this._anchorCorrupt = 0;
+            }
+            this.points.push({ x, y });
+        }
 
         update() {
             if (this.voidState && this.voidState.active) {
@@ -1371,8 +1379,21 @@
                 let ca = a * (1 - (i / this.letters.length) * 0.2);
                 let ox = (Math.random() - 0.5) * this.corruption * 2;
                 let oy = (Math.random() - 0.5) * this.corruption * 2;
-                fill(this.color[0], this.color[1], this.color[2], ca);
-                text(ch, i * 7 + ox, oy);
+                if (textDistort > 0) {
+                    push();
+                    let sx = 1 + (Math.random() - 0.5) * textDistort * 0.1;
+                    let sy = 1 + (Math.random() - 0.5) * textDistort * 0.1;
+                    let sz = 11 * sqrt(sx * sy);
+                    translate(i * 7 + ox, oy);
+                    scale(sx, sy);
+                    fill(this.color[0], this.color[1], this.color[2], ca);
+                    textSize(sz);
+                    text(ch, 0, 0);
+                    pop();
+                } else {
+                    fill(this.color[0], this.color[1], this.color[2], ca);
+                    text(ch, i * 7 + ox, oy);
+                }
             }
             pop();
         }
@@ -1850,6 +1871,7 @@
             riftPerks[type] -= 16;
             if (riftPerks[type] <= 0) delete riftPerks[type];
         }
+        if (textDistort > 0) textDistort--;
 
         // ─── Continuous voice detection + generative effects ───
         getVolume();
@@ -1857,6 +1879,7 @@
         if (speakingNow) {
             voiceActive = true;
             lastVoiceTime = frameCount;
+            if (voiceVolumeSmooth > 0.5) textDistort = 15;
             let gx = mouseX - scrollX, gy = mouseY - scrollY;
             let vol = voiceVolumeSmooth;
             let pitchN = voicePitch > 0 ? constrain(voicePitch / 800, 0, 1) : 0.5;
@@ -2093,11 +2116,15 @@
                             rem.pulsing = true; rem.pulseTime = Date.now();
                             let cc = currentStroke.params.color;
                             let rc = rem.color;
-                            currentStroke.params.color = [
-                                cc[0] * 0.9 + rc[0] * 0.1,
-                                cc[1] * 0.9 + rc[1] * 0.1,
-                                cc[2] * 0.9 + rc[2] * 0.1
-                            ];
+                                currentStroke.params.color = [
+                                    cc[0] * 0.9 + rc[0] * 0.1,
+                                    cc[1] * 0.9 + rc[1] * 0.1,
+                                    cc[2] * 0.9 + rc[2] * 0.1
+                                ];
+                                if (rem.isAnchor) {
+                                    // Corruption: offset next point
+                                    currentStroke._anchorCorrupt = 1;
+                                }
                         }
                     }
                 }
@@ -2164,6 +2191,10 @@
                 else if (energy < 70) { bg = 'rgba(200,180,60,0.5)'; }
                 else { bg = 'rgba(60,200,100,0.5)'; }
                 fillEl.style.background = bg;
+                if (textDistort > 0) {
+                    let ds = 1 + sin(frameCount * 0.3) * textDistort * 0.04;
+                    barEl.style.transform = 'scaleX(' + ds + ') scaleY(' + (1/ds) + ')';
+                } else barEl.style.transform = '';
                 let labelEl = document.getElementById('energy-label');
                 if (labelEl) {
                     if (energy <= 0) labelEl.textContent = '\u26D4 out of energy. find a rift.';
@@ -2171,6 +2202,10 @@
                     else if (energy < 40) labelEl.textContent = '\u26A0 ' + Math.floor(energy);
                     else if (energy < 70) labelEl.textContent = 'gl1tch 3n3rgy ' + Math.floor(energy);
                     else labelEl.textContent = 'gl1tch 3n3rgy ' + Math.floor(energy);
+                    if (textDistort > 0) {
+                        let ds = 1 + sin(frameCount * 0.2 + 1) * textDistort * 0.05;
+                        labelEl.style.transform = 'scale(' + ds + ')';
+                    } else labelEl.style.transform = '';
                 }
             }
         }
@@ -2293,21 +2328,28 @@
                 pulseSize = dt < 500 ? sin(map(dt, 0, 500, 0, PI)) * 0.5 : 0;
                 if (dt > 500) rem.pulsing = false;
             }
-            let sz = (rem.size + pulseSize) * 3 * (rem.isAnchor ? 1.2 : 1);
+            let sz = (rem.size + pulseSize) * 3;
+            let anchorPulse = 1;
+            let anchorAlpha = 1;
+            if (rem.isAnchor) {
+                anchorPulse = 0.24 * (1 + sin(frameCount * 0.03 + rem.id.length) * 0.2);
+                anchorAlpha = 0.4 + sin(frameCount * 0.02 + rem.id.length * 1.5) * 0.2;
+                sz *= anchorPulse;
+            }
             // Bright glow behind every remnant
             noStroke();
-            fill(rem.color[0], rem.color[1], rem.color[2], 60);
+            fill(rem.color[0], rem.color[1], rem.color[2], 60 * anchorAlpha);
             ellipse(rx, ry, sz * 4, sz * 4);
             switch (rem.type) {
                 case 'dot':
                     noStroke();
-                    fill(rem.color[0], rem.color[1], rem.color[2], 200);
+                    fill(rem.color[0], rem.color[1], rem.color[2], 200 * anchorAlpha);
                     ellipse(rx, ry, sz, sz);
-                    fill(255, 255, 255, 80);
+                    fill(255, 255, 255, 80 * anchorAlpha);
                     ellipse(rx, ry, sz * 0.4, sz * 0.4);
                     break;
                 case 'fragment':
-                    stroke(rem.color[0], rem.color[1], rem.color[2], 200);
+                    stroke(rem.color[0], rem.color[1], rem.color[2], 200 * anchorAlpha);
                     strokeWeight(1.5);
                     let fa = frameCount * 0.02 + rem.id.length;
                     line(rx, ry, rx + cos(fa) * sz * 3, ry + sin(fa) * sz * 3);
@@ -2315,17 +2357,17 @@
                 case 'spark':
                     noStroke();
                     let sparkGlow = 150 + sin(frameCount * 0.05 + rem.id.length) * 60;
-                    fill(rem.color[0], rem.color[1], rem.color[2], sparkGlow);
+                    fill(rem.color[0], rem.color[1], rem.color[2], sparkGlow * anchorAlpha);
                     ellipse(rx, ry, sz * 3, sz * 3);
-                    fill(255, 255, 255, sparkGlow * 0.3);
+                    fill(255, 255, 255, sparkGlow * 0.3 * anchorAlpha);
                     ellipse(rx, ry, sz * 0.5, sz * 0.5);
                     break;
                 case 'memory':
                     let memPulse = 160 + sin(frameCount * 0.03 + rem.id.length) * 50;
                     noStroke();
-                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse);
+                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse * anchorAlpha);
                     ellipse(rx, ry, sz * 1.5, sz * 1.5);
-                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse * 0.5);
+                    fill(rem.color[0], rem.color[1], rem.color[2], memPulse * 0.5 * anchorAlpha);
                     ellipse(rx, ry, sz * 3, sz * 3);
                     break;
             }
